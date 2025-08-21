@@ -93,6 +93,10 @@ api
 # Migration files (if you want to exclude them)
 # migrations/*.sql
 
+# Environment files (keep these out of version control)
+.env*
+!.env.example
+
 *.sh
 
 MIGRATION_GUIDE.md
