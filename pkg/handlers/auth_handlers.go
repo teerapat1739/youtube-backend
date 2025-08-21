@@ -1,0 +1,303 @@
+package handlers
+
+import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+
+	"github.com/gamemini/youtube/pkg/auth/google"
+	"github.com/gamemini/youtube/pkg/models"
+	"github.com/gamemini/youtube/pkg/repository"
+	"github.com/gamemini/youtube/pkg/services"
+)
+
+// AuthHandlers contains all authentication-related handlers
+type AuthHandlers struct {
+	userService    *services.UserService
+	oauthHandler   *google.EnhancedOAuthHandler
+}
+
+// NewAuthHandlers creates new authentication handlers
+func NewAuthHandlers() *AuthHandlers {
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "default-development-secret-change-in-production"
+		log.Println("⚠️  Using default JWT secret - set JWT_SECRET environment variable in production")
+	}
+
+	userRepo := repository.NewUserRepository()
+	userService := services.NewUserService(userRepo, jwtSecret)
+	oauthHandler := google.NewEnhancedOAuthHandler(jwtSecret)
+
+	return &AuthHandlers{
+		userService:  userService,
+		oauthHandler: oauthHandler,
+	}
+}
+
+// HandleGoogleLogin handles Google OAuth login requests
+func (h *AuthHandlers) HandleGoogleLogin(w http.ResponseWriter, r *http.Request) {
+	log.Println("🔑 Handling Google login request")
+	h.oauthHandler.HandleLogin(w, r)
+}
+
+// HandleGoogleCallback handles Google OAuth callback
+func (h *AuthHandlers) HandleGoogleCallback(w http.ResponseWriter, r *http.Request) {
+	log.Println("🔄 Handling Google OAuth callback")
+	h.oauthHandler.HandleCallback(w, r)
+}
+
+// HandleUserInfo handles user info requests
+func (h *AuthHandlers) HandleUserInfo(w http.ResponseWriter, r *http.Request) {
+	log.Println("👤 Handling user info request")
+	h.oauthHandler.HandleUserInfo(w, r)
+}
+
+// HandleCreateInitialUserProfile handles initial user profile creation
+func (h *AuthHandlers) HandleCreateInitialUserProfile(w http.ResponseWriter, r *http.Request) {
+	log.Println("👤 Handling create initial user profile request")
+	h.oauthHandler.HandleCreateInitialProfile(w, r)
+}
+
+// HandleGetUserProfile gets user profile with vote status
+func (h *AuthHandlers) HandleGetUserProfile(w http.ResponseWriter, r *http.Request) {
+	log.Println("👤 Handling get user profile request")
+
+	// Extract user from JWT token
+	user, err := h.extractUserFromToken(r)
+	if err != nil {
+		log.Printf("❌ Failed to extract user from token: %v", err)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get activity ID from query params (optional)
+	activityID := r.URL.Query().Get("activity_id")
+	if activityID == "" {
+		activityID = "active" // Default to active activity
+	}
+
+	// Get user profile with vote status
+	profileResponse, err := h.userService.GetUserProfileWithVoteStatus(r.Context(), user.ID, activityID)
+	if err != nil {
+		log.Printf("❌ Failed to get user profile: %v", err)
+		http.Error(w, "Failed to get user profile", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("✅ User profile retrieved - UserID: %s", user.ID)
+
+	response := map[string]interface{}{
+		"success": true,
+		"data":    profileResponse,
+	}
+
+	h.writeJSONResponse(w, response)
+}
+
+// HandleUpdateUserProfile handles user profile updates
+func (h *AuthHandlers) HandleUpdateUserProfile(w http.ResponseWriter, r *http.Request) {
+	log.Println("📝 Handling update user profile request")
+
+	// Extract user from JWT token
+	user, err := h.extractUserFromToken(r)
+	if err != nil {
+		log.Printf("❌ Failed to extract user from token: %v", err)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Parse request body
+	var profileData struct {
+		FirstName   string `json:"first_name"`
+		LastName    string `json:"last_name"`
+		Phone       string `json:"phone"`
+		NationalID  string `json:"national_id"`
+		AcceptTerms bool   `json:"accept_terms"`
+		AcceptPDPA  bool   `json:"accept_pdpa"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&profileData); err != nil {
+		log.Printf("❌ Failed to decode request body: %v", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Validate required fields
+	if !profileData.AcceptTerms || !profileData.AcceptPDPA {
+		http.Error(w, "Terms and PDPA acceptance required", http.StatusBadRequest)
+		return
+	}
+
+	// Update user profile
+	updates := &models.UpdateUserProfileRequest{
+		FirstName:   profileData.FirstName,
+		LastName:    profileData.LastName,
+		NationalID:  profileData.NationalID,
+		Phone:       profileData.Phone,
+		AcceptTerms: profileData.AcceptTerms,
+		AcceptPDPA:  profileData.AcceptPDPA,
+	}
+
+	updatedUser, err := h.userService.UpdateUserProfile(r.Context(), user.ID, updates)
+	if err != nil {
+		log.Printf("❌ Failed to update user profile: %v", err)
+		if strings.Contains(err.Error(), "already exists") {
+			http.Error(w, "National ID already exists for another user", http.StatusConflict)
+		} else {
+			http.Error(w, "Failed to update user profile", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	log.Printf("✅ User profile updated successfully - UserID: %s", user.ID)
+
+	response := map[string]interface{}{
+		"success": true,
+		"message": "User profile updated successfully",
+		"data": map[string]interface{}{
+			"user": updatedUser,
+		},
+	}
+
+	h.writeJSONResponse(w, response)
+}
+
+// HandleAcceptTerms handles terms and PDPA acceptance
+func (h *AuthHandlers) HandleAcceptTerms(w http.ResponseWriter, r *http.Request) {
+	log.Println("📋 Handling accept terms request")
+
+	// Extract user from JWT token
+	user, err := h.extractUserFromToken(r)
+	if err != nil {
+		log.Printf("❌ Failed to extract user from token: %v", err)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Parse request body
+	var termsData struct {
+		TermsVersion string `json:"terms_version"`
+		PDPAVersion  string `json:"pdpa_version"`
+		AcceptTerms  bool   `json:"accept_terms"`
+		AcceptPDPA   bool   `json:"accept_pdpa"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&termsData); err != nil {
+		log.Printf("❌ Failed to decode request body: %v", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Get client IP and User-Agent for audit
+	ipAddress := h.getClientIP(r)
+	userAgent := r.Header.Get("User-Agent")
+
+	// Accept terms
+	err = h.userService.AcceptTerms(
+		r.Context(),
+		user.ID,
+		termsData.TermsVersion,
+		termsData.PDPAVersion,
+		termsData.AcceptTerms,
+		termsData.AcceptPDPA,
+		ipAddress,
+		userAgent,
+	)
+
+	if err != nil {
+		log.Printf("❌ Failed to accept terms: %v", err)
+		http.Error(w, "Failed to accept terms", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("✅ Terms accepted successfully - UserID: %s", user.ID)
+
+	response := map[string]interface{}{
+		"success": true,
+		"message": "Terms and PDPA accepted successfully",
+	}
+
+	h.writeJSONResponse(w, response)
+}
+
+// HandleGetTerms handles getting current terms and PDPA versions
+func (h *AuthHandlers) HandleGetTerms(w http.ResponseWriter, r *http.Request) {
+	log.Println("📋 Handling get terms request")
+
+	userRepo := repository.NewUserRepository()
+	termsVersion, pdpaVersion, err := userRepo.GetActiveTermsVersions(r.Context())
+	if err != nil {
+		log.Printf("❌ Failed to get terms versions: %v", err)
+		http.Error(w, "Failed to get terms versions", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"success": true,
+		"data": map[string]interface{}{
+			"terms_version": termsVersion,
+			"terms_content": "Terms and Conditions content", // Could be fetched from DB
+			"pdpa_version":  pdpaVersion,
+			"pdpa_content":  "Privacy Policy content", // Could be fetched from DB
+		},
+	}
+
+	h.writeJSONResponse(w, response)
+}
+
+// extractUserFromToken extracts user from JWT token
+func (h *AuthHandlers) extractUserFromToken(r *http.Request) (*models.User, error) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return nil, fmt.Errorf("no authorization header")
+	}
+
+	// Remove "Bearer " prefix
+	if len(authHeader) < 7 || authHeader[:7] != "Bearer " {
+		return nil, fmt.Errorf("invalid authorization header format")
+	}
+
+	tokenString := authHeader[7:]
+
+	// Validate JWT token
+	user, err := h.userService.ValidateAccessToken(tokenString)
+	if err != nil {
+		return nil, fmt.Errorf("invalid token: %w", err)
+	}
+
+	return user, nil
+}
+
+// getClientIP extracts client IP address from request
+func (h *AuthHandlers) getClientIP(r *http.Request) string {
+	// Check X-Forwarded-For header first (for load balancers/proxies)
+	forwarded := r.Header.Get("X-Forwarded-For")
+	if forwarded != "" {
+		// X-Forwarded-For can contain multiple IPs, take the first one
+		ips := strings.Split(forwarded, ",")
+		return strings.TrimSpace(ips[0])
+	}
+
+	// Check X-Real-IP header
+	realIP := r.Header.Get("X-Real-IP")
+	if realIP != "" {
+		return realIP
+	}
+
+	// Fall back to RemoteAddr
+	return r.RemoteAddr
+}
+
+// writeJSONResponse writes a JSON response
+func (h *AuthHandlers) writeJSONResponse(w http.ResponseWriter, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("❌ Failed to encode JSON response: %v", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+	}
+}
