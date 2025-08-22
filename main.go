@@ -51,14 +51,41 @@ func loadEnv() {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
+		
+		// Log CORS request for debugging
+		log.Printf("🌐 [CORS] Request from origin: %s, Method: %s, Path: %s", origin, r.Method, r.URL.Path)
 
+		// Get frontend URL from environment variable
+		frontendURL := os.Getenv("FRONTEND_URL")
+		
 		// Allow specific origins
 		allowedOrigins := []string{
 			"http://localhost:3000",
 			"http://localhost:3001",
 			"http://localhost:3002",
-			"http://localhost:5173",      // Vite default
-			"https://poc-461500.web.app", // Firebase hosting
+			"http://localhost:5173",        // Vite default
+			"https://poc-461500.web.app",   // Firebase hosting
+			"https://ananped.netlify.app",  // Production frontend
+		}
+		
+		// Add FRONTEND_URL to allowed origins if it's set and not already included
+		if frontendURL != "" {
+			found := false
+			for _, allowed := range allowedOrigins {
+				if allowed == frontendURL {
+					found = true
+					break
+				}
+			}
+			if !found {
+				allowedOrigins = append(allowedOrigins, frontendURL)
+				log.Printf("🌐 [CORS] Added FRONTEND_URL to allowed origins: %s", frontendURL)
+			}
+		}
+		
+		// Log allowed origins for debugging on first request (to avoid spam)
+		if r.URL.Path == "/health" && r.Method == "GET" {
+			log.Printf("🌐 [CORS] Current allowed origins: %v", allowedOrigins)
 		}
 
 		// Check if origin is allowed
@@ -72,6 +99,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 		if originAllowed {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
+			log.Printf("✅ [CORS] Allowed origin: %s", origin)
 		} else if origin == "" {
 			// If no origin header (like direct API calls), allow localhost:3000 as default
 			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
@@ -79,6 +107,9 @@ func corsMiddleware(next http.Handler) http.Handler {
 			// For development, be more permissive with localhost origins
 			if strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1") {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
+			} else {
+				// Log the blocked origin for debugging
+				log.Printf("⚠️ [CORS] Blocked origin: %s", origin)
 			}
 		}
 
