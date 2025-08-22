@@ -84,7 +84,10 @@ func (r *UserRepository) GetUserByGoogleID(ctx context.Context, googleID string)
 func (r *UserRepository) GetUserByID(ctx context.Context, userID string) (*models.User, error) {
 	query := `
 		SELECT id, google_id, email, first_name, last_name, national_id, phone,
-		       youtube_subscribed, subscription_verified_at, created_at, updated_at
+		       terms_accepted, terms_version, pdpa_accepted, pdpa_version, profile_completed,
+		       youtube_subscribed, subscription_verified_at, 
+		       google_access_token, google_refresh_token, google_token_expiry, youtube_channel_id,
+		       created_at, updated_at
 		FROM users
 		WHERE id = $1
 	`
@@ -98,8 +101,17 @@ func (r *UserRepository) GetUserByID(ctx context.Context, userID string) (*model
 		&user.LastName,
 		&user.NationalID,
 		&user.Phone,
+		&user.TermsAccepted,
+		&user.TermsVersion,
+		&user.PDPAAccepted,
+		&user.PDPAVersion,
+		&user.ProfileCompleted,
 		&user.YouTubeSubscribed,
 		&user.SubscriptionVerifiedAt,
+		&user.GoogleAccessToken,
+		&user.GoogleRefreshToken,
+		&user.GoogleTokenExpiry,
+		&user.YouTubeChannelID,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -331,6 +343,98 @@ func (r *UserRepository) UpsertUserFromOAuth(ctx context.Context, googleID, emai
 
 	log.Printf("✅ User upserted successfully - ID: %s, IsNew: %t", user.ID, isNewUser)
 	return &user, isNewUser, nil
+}
+
+// UpsertUserFromOAuthWithTokens creates or updates a user from OAuth data with tokens
+func (r *UserRepository) UpsertUserFromOAuthWithTokens(ctx context.Context, googleID, email string, tokenData *models.OAuthTokenData) (*models.User, bool, error) {
+	log.Printf("🔄 Attempting to upsert user with OAuth tokens - GoogleID: %s, Email: %s", googleID, email)
+
+	// Use PostgreSQL's UPSERT (INSERT ... ON CONFLICT) for atomic operation
+	query := `
+		INSERT INTO users (google_id, email, google_access_token, google_refresh_token, google_token_expiry, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		ON CONFLICT (google_id) 
+		DO UPDATE SET 
+			email = EXCLUDED.email,
+			google_access_token = EXCLUDED.google_access_token,
+			google_refresh_token = EXCLUDED.google_refresh_token,
+			google_token_expiry = EXCLUDED.google_token_expiry,
+			updated_at = NOW()
+		RETURNING id, google_id, email, first_name, last_name, national_id, phone,
+				terms_accepted, terms_version, pdpa_accepted, pdpa_version, profile_completed,
+				youtube_subscribed, subscription_verified_at,
+				google_access_token, google_refresh_token, google_token_expiry, youtube_channel_id,
+				created_at, updated_at,
+				(xmax = 0) as is_new_user
+	`
+
+	var user models.User
+	var isNewUser bool
+
+	err := database.GetDB().QueryRow(ctx, query, googleID, email, tokenData.AccessToken, tokenData.RefreshToken, tokenData.Expiry).Scan(
+		&user.ID,
+		&user.GoogleID,
+		&user.Email,
+		&user.FirstName,
+		&user.LastName,
+		&user.NationalID,
+		&user.Phone,
+		&user.TermsAccepted,
+		&user.TermsVersion,
+		&user.PDPAAccepted,
+		&user.PDPAVersion,
+		&user.ProfileCompleted,
+		&user.YouTubeSubscribed,
+		&user.SubscriptionVerifiedAt,
+		&user.GoogleAccessToken,
+		&user.GoogleRefreshToken,
+		&user.GoogleTokenExpiry,
+		&user.YouTubeChannelID,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+		&isNewUser,
+	)
+
+	if err != nil {
+		log.Printf("❌ Failed to upsert user with tokens: %v", err)
+		return nil, false, fmt.Errorf("failed to upsert user with tokens: %w", err)
+	}
+
+	log.Printf("✅ User with tokens upserted successfully - ID: %s, IsNew: %t", user.ID, isNewUser)
+	return &user, isNewUser, nil
+}
+
+// UpdateUserOAuthTokens updates OAuth tokens for a user
+func (r *UserRepository) UpdateUserOAuthTokens(ctx context.Context, userID string, tokenData *models.OAuthTokenData) error {
+	log.Printf("🔄 Updating OAuth tokens for user - UserID: %s", userID)
+
+	query := `
+		UPDATE users SET 
+			google_access_token = $2,
+			google_refresh_token = $3,
+			google_token_expiry = $4,
+			updated_at = NOW()
+		WHERE id = $1
+	`
+
+	result, err := database.GetDB().Exec(ctx, query,
+		userID,
+		tokenData.AccessToken,
+		tokenData.RefreshToken,
+		tokenData.Expiry,
+	)
+
+	if err != nil {
+		log.Printf("❌ Failed to update OAuth tokens: %v", err)
+		return fmt.Errorf("failed to update OAuth tokens: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return fmt.Errorf("user not found")
+	}
+
+	log.Printf("✅ OAuth tokens updated successfully - UserID: %s", userID)
+	return nil
 }
 
 // UpdateUserProfileAtomic updates user profile atomically with validation

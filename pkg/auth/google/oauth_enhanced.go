@@ -82,20 +82,30 @@ func (h *EnhancedOAuthHandler) HandleCallback(w http.ResponseWriter, r *http.Req
 	
 	log.Printf("✅ Retrieved user info from Google - ID: %s, Email: %s", userInfo.ID, userInfo.Email)
 	
-	// Create or update user in our database
-	authData, err := h.userService.CreateOrUpdateUserFromOAuth(ctx, userInfo.ID, userInfo.Email)
+	// Create OAuth token data
+	oauthTokenData := &models.OAuthTokenData{
+		AccessToken:  token.AccessToken,
+		RefreshToken: token.RefreshToken,
+		Expiry:       token.Expiry,
+		TokenType:    token.TokenType,
+	}
+	
+	// Create or update user in our database with OAuth tokens
+	authData, err := h.userService.CreateOrUpdateUserFromOAuthWithTokens(ctx, userInfo.ID, userInfo.Email, oauthTokenData)
 	if err != nil {
-		log.Printf("❌ Failed to create/update user: %v", err)
+		log.Printf("❌ Failed to create/update user with OAuth tokens: %v", err)
 		http.Redirect(w, r, frontendURL+"/?error=user_creation_failed", http.StatusTemporaryRedirect)
 		return
 	}
 	
 	log.Printf("✅ User created/updated successfully - UserID: %s", authData.User.ID)
 	
-	// Redirect to frontend with our JWT token instead of Google's access token
-	redirectURL := fmt.Sprintf("%s/?token=%s&user_id=%s", 
+	// Redirect to frontend with both JWT token and Google access token
+	// JWT token for backend authentication, Google token for YouTube API
+	redirectURL := fmt.Sprintf("%s/?token=%s&google_token=%s&user_id=%s", 
 		frontendURL, 
 		authData.AccessToken, 
+		token.AccessToken,
 		authData.User.ID)
 	
 	log.Printf("🔄 Redirecting to frontend with JWT token")

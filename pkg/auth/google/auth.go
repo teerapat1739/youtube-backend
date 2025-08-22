@@ -14,16 +14,20 @@ import (
 
 // GetOAuthConfig returns Google OAuth configuration with current environment variables
 func GetOAuthConfig() *oauth2.Config {
-	// Get base URL from environment variable
-	// For Cloud Run deployment, this should be set to the service URL
-	baseURL := os.Getenv("BASE_URL")
-	if baseURL == "" {
-		// Use the deployed URL as default for Cloud Run
-		baseURL = "https://youtube-backend-283958071703.asia-southeast1.run.app"
+	// Check for explicit redirect URL first (for local development)
+	redirectURL := os.Getenv("REDIRECT_URL")
+	if redirectURL == "" {
+		// Fall back to BASE_URL for production
+		baseURL := os.Getenv("BASE_URL")
+		if baseURL == "" {
+			// Use the deployed URL as default for Cloud Run
+			baseURL = "https://youtube-backend-283958071703.asia-southeast1.run.app"
+		}
+		redirectURL = baseURL + "/auth/google/callback"
 	}
 
 	return &oauth2.Config{
-		RedirectURL:  baseURL + "/auth/google/callback",
+		RedirectURL:  redirectURL,
 		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
 		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
 		Scopes: []string{

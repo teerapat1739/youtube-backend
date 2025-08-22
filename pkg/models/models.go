@@ -20,6 +20,11 @@ type User struct {
 	ProfileCompleted       bool       `json:"profile_completed" db:"profile_completed"`
 	YouTubeSubscribed      bool       `json:"youtube_subscribed" db:"youtube_subscribed"`
 	SubscriptionVerifiedAt *time.Time `json:"subscription_verified_at,omitempty" db:"subscription_verified_at"`
+	// OAuth token fields for YouTube API access
+	GoogleAccessToken      *string    `json:"-" db:"google_access_token"`       // Hidden from JSON for security
+	GoogleRefreshToken     *string    `json:"-" db:"google_refresh_token"`      // Hidden from JSON for security
+	GoogleTokenExpiry      *time.Time `json:"-" db:"google_token_expiry"`       // Hidden from JSON for security
+	YouTubeChannelID       *string    `json:"youtube_channel_id,omitempty" db:"youtube_channel_id"` // User's YouTube channel ID
 	CreatedAt              time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt              time.Time  `json:"updated_at" db:"updated_at"`
 }
@@ -177,6 +182,29 @@ type APIResponse struct {
 	Message   string      `json:"message,omitempty"`
 	ErrorCode string      `json:"error_code,omitempty"`
 	Details   interface{} `json:"details,omitempty"`
+}
+
+// OAuthTokenData represents OAuth token information for a user
+type OAuthTokenData struct {
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	Expiry       time.Time `json:"expiry"`
+	TokenType    string    `json:"token_type"`
+}
+
+// YouTubeSubscriptionCheckRequest represents a subscription check request
+type YouTubeSubscriptionCheckRequest struct {
+	ChannelID string `json:"channel_id" validate:"required"`
+	UserID    string `json:"user_id,omitempty"`
+}
+
+// YouTubeSubscriptionCheckResponse represents a subscription check response
+type YouTubeSubscriptionCheckResponse struct {
+	IsSubscribed    bool   `json:"is_subscribed"`
+	ChannelID       string `json:"channel_id"`
+	UserChannelID   string `json:"user_channel_id,omitempty"`
+	SubscriptionID  string `json:"subscription_id,omitempty"`
+	VerificationMethod string `json:"verification_method"` // "oauth", "api_key", "fallback"
 }
 
 // HealthCheckResponse represents the health check response

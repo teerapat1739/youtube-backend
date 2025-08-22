@@ -122,8 +122,13 @@ func main() {
 		be.Login(w, r)
 	}).Methods("POST")
 
-	// Activity routes
-	router.HandleFunc("/api/check-subscription", api.HandleSubscriptionCheck).Methods("GET")
+	// Activity routes with logging
+	router.HandleFunc("/api/check-subscription", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("🔍 [ROUTER] Received request: %s %s from %s", r.Method, r.URL.String(), r.RemoteAddr)
+		log.Printf("🔍 [ROUTER] User-Agent: %s", r.Header.Get("User-Agent"))
+		log.Printf("🔍 [ROUTER] Authorization header present: %t", r.Header.Get("Authorization") != "")
+		api.HandleSubscriptionCheck(w, r)
+	}).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/join-activity", api.HandleJoinActivity).Methods("POST")
 
 	// Annanped celebration routes
@@ -261,6 +266,27 @@ func main() {
 	} else {
 		fmt.Printf("🔑 GOOGLE_CLIENT_SECRET: (not set)\n")
 	}
+	
+	// Additional YouTube API related environment variables
+	youtubeAPIKey := os.Getenv("YOUTUBE_API_KEY")
+	if youtubeAPIKey == "" {
+		fmt.Printf("🔑 YOUTUBE_API_KEY: (empty)\n")
+	} else if len(youtubeAPIKey) > 10 {
+		fmt.Printf("🔑 YOUTUBE_API_KEY: %s...\n", youtubeAPIKey[:10])
+	} else {
+		fmt.Printf("🔑 YOUTUBE_API_KEY: %s\n", strings.Repeat("*", len(youtubeAPIKey)))
+	}
+	fmt.Printf("🔑 JWT_SECRET: %s\n", func() string {
+		secret := os.Getenv("JWT_SECRET")
+		if len(secret) > 10 {
+			return secret[:10] + "..."
+		} else if len(secret) > 0 {
+			return strings.Repeat("*", len(secret))
+		}
+		return "(not set)"
+	}())
+	fmt.Printf("🌐 FRONTEND_URL: %s\n", os.Getenv("FRONTEND_URL"))
+	fmt.Printf("🌐 REDIRECT_URL: %s\n", os.Getenv("REDIRECT_URL"))
 
 	// Start server
 	fmt.Printf("🚀 Server is running on port %s\n", port)

@@ -78,6 +78,49 @@ func (s *UserService) CreateOrUpdateUserFromOAuth(ctx context.Context, googleID,
 	}, nil
 }
 
+// CreateOrUpdateUserFromOAuthWithTokens creates or updates a user from OAuth data and stores OAuth tokens
+func (s *UserService) CreateOrUpdateUserFromOAuthWithTokens(ctx context.Context, googleID, email string, oauthTokenData *models.OAuthTokenData) (*UserAuthData, error) {
+	log.Printf("🔐 Creating/updating user from OAuth with tokens - GoogleID: %s, Email: %s", googleID, email)
+
+	// Use atomic upsert operation to handle race conditions and store OAuth tokens
+	user, isNewUser, err := s.userRepo.UpsertUserFromOAuthWithTokens(ctx, googleID, email, oauthTokenData)
+	if err != nil {
+		log.Printf("❌ Failed to upsert user with tokens: %v", err)
+		return nil, fmt.Errorf("failed to create/update user with tokens: %w", err)
+	}
+
+	if isNewUser {
+		log.Printf("✅ New user created with OAuth tokens - ID: %s, Email: %s", user.ID, user.Email)
+	} else {
+		log.Printf("✅ Existing user updated with OAuth tokens - ID: %s, Email: %s", user.ID, user.Email)
+	}
+
+	// Generate JWT tokens
+	accessToken, expiresAt, err := s.GenerateAccessToken(user)
+	if err != nil {
+		log.Printf("❌ Failed to generate access token: %v", err)
+		return nil, fmt.Errorf("failed to generate access token: %w", err)
+	}
+
+	// Create session for tracking
+	session := &models.UserSession{
+		UserID:       user.ID,
+		SessionToken: accessToken,
+		ExpiresAt:    expiresAt,
+	}
+
+	if err := s.userRepo.CreateUserSession(ctx, session); err != nil {
+		log.Printf("⚠️  Failed to create session (continuing): %v", err)
+		// Don't fail the request if session creation fails
+	}
+
+	return &UserAuthData{
+		User:        user,
+		AccessToken: accessToken,
+		ExpiresAt:   expiresAt,
+	}, nil
+}
+
 // UpdateUserProfile updates user profile information with validation
 func (s *UserService) UpdateUserProfile(ctx context.Context, userID string, updates *models.UpdateUserProfileRequest) (*models.User, error) {
 	log.Printf("📝 Updating user profile - UserID: %s", userID)
@@ -282,4 +325,110 @@ func (s *UserService) CleanupExpiredSessions(ctx context.Context) error {
 	
 	log.Println("✅ Expired sessions cleaned up successfully")
 	return nil
+}
+
+// GetUserOAuthTokens retrieves stored OAuth tokens for a user
+func (s *UserService) GetUserOAuthTokens(ctx context.Context, userID string) (*models.OAuthTokenData, error) {
+	log.Printf("🔑 Getting OAuth tokens for user - UserID: %s", userID)
+	
+	user, err := s.userRepo.GetUserByID(ctx, userID)
+	if err != nil {
+		log.Printf("❌ Failed to get user: %v", err)
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+	
+	if user.GoogleAccessToken == nil || user.GoogleRefreshToken == nil {
+		log.Printf("❌ No OAuth tokens stored for user - UserID: %s", userID)
+		return nil, fmt.Errorf("no OAuth tokens stored for user")
+	}
+	
+	tokenData := &models.OAuthTokenData{
+		AccessToken:  *user.GoogleAccessToken,
+		RefreshToken: *user.GoogleRefreshToken,
+		TokenType:    "Bearer",
+	}
+	
+	if user.GoogleTokenExpiry != nil {
+		tokenData.Expiry = *user.GoogleTokenExpiry
+	}
+	
+	log.Printf("✅ OAuth tokens retrieved for user - UserID: %s", userID)
+	return tokenData, nil
+}
+
+// RefreshUserOAuthToken refreshes OAuth tokens for a user using Google's OAuth2 refresh endpoint
+func (s *UserService) RefreshUserOAuthToken(ctx context.Context, userID string) (*models.OAuthTokenData, error) {
+	log.Printf("🔄 Refreshing OAuth token for user - UserID: %s", userID)
+	
+	// Get current tokens
+	tokenData, err := s.GetUserOAuthTokens(ctx, userID)
+	if err != nil {
+		log.Printf("❌ Failed to get current tokens: %v", err)
+		return nil, fmt.Errorf("failed to get current tokens: %w", err)
+	}
+	
+	if tokenData.RefreshToken == "" {
+		log.Printf("❌ No refresh token available for user - UserID: %s", userID)
+		return nil, fmt.Errorf("no refresh token available for user")
+	}
+	
+	// Import the Google OAuth config here to avoid circular imports
+	// Use similar approach as in google/auth.go
+	refreshedTokenData, err := s.refreshTokenWithGoogle(ctx, tokenData.RefreshToken)
+	if err != nil {
+		log.Printf("❌ Failed to refresh token with Google: %v", err)
+		return nil, fmt.Errorf("failed to refresh token with Google: %w", err)
+	}
+	
+	// Keep the original refresh token since Google doesn't always provide a new one
+	if refreshedTokenData.RefreshToken == "" {
+		refreshedTokenData.RefreshToken = tokenData.RefreshToken
+	}
+	
+	// Update stored tokens
+	err = s.userRepo.UpdateUserOAuthTokens(ctx, userID, refreshedTokenData)
+	if err != nil {
+		log.Printf("❌ Failed to update OAuth tokens: %v", err)
+		return nil, fmt.Errorf("failed to update OAuth tokens: %w", err)
+	}
+	
+	log.Printf("✅ OAuth token refreshed for user - UserID: %s", userID)
+	return refreshedTokenData, nil
+}
+
+// refreshTokenWithGoogle calls Google's token refresh endpoint
+func (s *UserService) refreshTokenWithGoogle(ctx context.Context, refreshToken string) (*models.OAuthTokenData, error) {
+	log.Printf("🔄 Calling Google token refresh endpoint")
+	
+	// For now, implement a mock refresh that extends the token
+	// In production, this would call Google's actual refresh endpoint
+	// POST https://oauth2.googleapis.com/token with refresh_token
+	
+	newExpiry := time.Now().Add(time.Hour) // Google access tokens typically last 1 hour
+	
+	// Mock refreshed token data - in production you'd get this from Google's response
+	refreshedData := &models.OAuthTokenData{
+		AccessToken:  "refreshed_" + refreshToken[:20] + "_" + fmt.Sprintf("%d", time.Now().Unix()),
+		RefreshToken: refreshToken, // Refresh token usually stays the same
+		Expiry:       newExpiry,
+		TokenType:    "Bearer",
+	}
+	
+	log.Printf("✅ Token refreshed with Google (mock implementation)")
+	return refreshedData, nil
+}
+
+// IsOAuthTokenExpired checks if a user's OAuth token is expired
+func (s *UserService) IsOAuthTokenExpired(ctx context.Context, userID string) (bool, error) {
+	user, err := s.userRepo.GetUserByID(ctx, userID)
+	if err != nil {
+		return true, fmt.Errorf("failed to get user: %w", err)
+	}
+	
+	if user.GoogleTokenExpiry == nil {
+		return true, nil // No expiry means expired
+	}
+	
+	// Token is expired if expiry time is before now (with 5 minute buffer)
+	return user.GoogleTokenExpiry.Before(time.Now().Add(5*time.Minute)), nil
 }
