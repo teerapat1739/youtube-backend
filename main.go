@@ -166,7 +166,7 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(activity)
 	}).Methods("GET", "OPTIONS")
-	
+
 	router.HandleFunc("/api/activities/{id}/teams", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		activityID := vars["id"]
@@ -182,7 +182,7 @@ func main() {
 			"activity_id": activityID,
 		})
 	}).Methods("GET", "OPTIONS")
-	
+
 	router.HandleFunc("/api/activities/{id}/vote", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		activityID := vars["id"]
@@ -266,7 +266,6 @@ func main() {
 	fmt.Printf("🚀 Server is running on port %s\n", port)
 	log.Fatal(http.ListenAndServe(":"+port, router))
 }
-
 
 // extractUserFromToken extracts user information from JWT token with proper verification
 func extractUserFromToken(r *http.Request) (googleID, email, userID string, err error) {
