@@ -14,10 +14,12 @@ import (
 
 // GetOAuthConfig returns Google OAuth configuration with current environment variables
 func GetOAuthConfig() *oauth2.Config {
-	// Get base URLs from environment variables with fallbacks
+	// Get base URL from environment variable
+	// For Cloud Run deployment, this should be set to the service URL
 	baseURL := os.Getenv("BASE_URL")
 	if baseURL == "" {
-		baseURL = "http://localhost:8080"
+		// Use the deployed URL as default for Cloud Run
+		baseURL = "https://youtube-backend-283958071703.asia-southeast1.run.app"
 	}
 
 	return &oauth2.Config{
