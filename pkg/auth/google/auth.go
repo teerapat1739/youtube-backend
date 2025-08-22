@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 
@@ -102,6 +103,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 func CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	// Get frontend URL from environment variable with fallback
 	frontendURL := os.Getenv("FRONTEND_URL")
+	log.Println("frontendURL", frontendURL)
 	if frontendURL == "" {
 		frontendURL = "http://localhost:3000"
 	}
