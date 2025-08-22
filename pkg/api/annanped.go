@@ -9,11 +9,11 @@ import (
 	"google.golang.org/api/youtube/v3"
 )
 
-// AnnanpedChannelID is the specific channel ID for Annanped
-const AnnanpedChannelID = "UC-chqi3Gpb4F7yBqedlnq5g"
+// AnanpedChannelID is the specific channel ID for Ananped
+const AnanpedChannelID = "UC-chqi3Gpb4F7yBqedlnq5g"
 
-// AnnanpedResponse represents the response for Annanped-specific endpoints
-type AnnanpedResponse struct {
+// AnanpedResponse represents the response for Ananped-specific endpoints
+type AnanpedResponse struct {
 	Success            bool                   `json:"success"`
 	Message            string                 `json:"message,omitempty"`
 	IsSubscribed       bool                   `json:"is_subscribed"`
@@ -22,15 +22,15 @@ type AnnanpedResponse struct {
 	CelebrationMessage string                 `json:"celebration_message,omitempty"`
 }
 
-// HandleAnnanpedSubscriptionCheck verifies if a user is subscribed to Annanped channel
-func HandleAnnanpedSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
-	log.Printf("🎉 [ANNANPED-CHECK] Starting Annanped subscription check from %s", r.RemoteAddr)
+// HandleAnanpedSubscriptionCheck verifies if a user is subscribed to Ananped channel
+func HandleAnanpedSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
+	log.Printf("🎉 [ANNANPED-CHECK] Starting Ananped subscription check from %s", r.RemoteAddr)
 	
 	// Extract token from request for user identification
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
 		log.Printf("❌ [ANNANPED-CHECK] No authorization header found")
-		sendAnnanpedErrorResponse(w, "Authorization token required", http.StatusUnauthorized)
+		sendAnanpedErrorResponse(w, "Authorization token required", http.StatusUnauthorized)
 		return
 	}
 
@@ -44,7 +44,7 @@ func HandleAnnanpedSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
 	apiKey := os.Getenv("YOUTUBE_API_KEY")
 	if apiKey == "" {
 		log.Printf("❌ [ANNANPED-CHECK] YOUTUBE_API_KEY environment variable not set")
-		sendAnnanpedErrorResponse(w, "YouTube API not configured", http.StatusInternalServerError)
+		sendAnanpedErrorResponse(w, "YouTube API not configured", http.StatusInternalServerError)
 		return
 	}
 
@@ -52,7 +52,7 @@ func HandleAnnanpedSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
 	youtubeService, err := createYouTubeServiceWithAPIKey(r.Context(), apiKey)
 	if err != nil {
 		log.Printf("❌ [ANNANPED-CHECK] Failed to create YouTube service: %v", err)
-		sendAnnanpedErrorResponse(w, "Failed to create YouTube service", http.StatusInternalServerError)
+		sendAnanpedErrorResponse(w, "Failed to create YouTube service", http.StatusInternalServerError)
 		return
 	}
 
@@ -60,52 +60,52 @@ func HandleAnnanpedSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
 	userID, err := extractUserIDFromJWT(tokenValue)
 	if err != nil {
 		log.Printf("❌ [ANNANPED-CHECK] Failed to extract user ID from JWT: %v", err)
-		sendAnnanpedErrorResponse(w, "Invalid authorization token", http.StatusUnauthorized)
+		sendAnanpedErrorResponse(w, "Invalid authorization token", http.StatusUnauthorized)
 		return
 	}
 
-	log.Printf("🎯 [ANNANPED-CHECK] Checking if user %s is subscribed to Annanped channel: %s", userID, AnnanpedChannelID)
+	log.Printf("🎯 [ANNANPED-CHECK] Checking if user %s is subscribed to Ananped channel: %s", userID, AnanpedChannelID)
 
-	// Check if the user is subscribed to Annanped channel using OAuth tokens
-	isSubscribed, verificationMethod, err := checkUserSubscriptionWithOAuth(r.Context(), userID, AnnanpedChannelID)
+	// Check if the user is subscribed to Ananped channel using OAuth tokens
+	isSubscribed, verificationMethod, err := checkUserSubscriptionWithOAuth(r.Context(), userID, AnanpedChannelID)
 	if err != nil {
 		log.Printf("❌ [ANNANPED-CHECK] Subscription check failed: %v", err)
-		// For Annanped celebration, we'll be permissive and assume not subscribed
+		// For Ananped celebration, we'll be permissive and assume not subscribed
 		isSubscribed = false
 	}
-	log.Printf("🎉 [ANNANPED-CHECK] Subscription result for Annanped: %t (method: %s)", isSubscribed, verificationMethod)
+	log.Printf("🎉 [ANNANPED-CHECK] Subscription result for Ananped: %t (method: %s)", isSubscribed, verificationMethod)
 
 	// Get user info from JWT token claims
 	userInfo := map[string]interface{}{
 		"user_id": userID,
 	}
 
-	// Get channel info for Annanped using API key
-	channelInfo, err := getChannelInfoWithAPIKey(youtubeService, AnnanpedChannelID)
+	// Get channel info for Ananped using API key
+	channelInfo, err := getChannelInfoWithAPIKey(youtubeService, AnanpedChannelID)
 	if err != nil {
-		log.Printf("⚠️ [ANNANPED-CHECK] Failed to get Annanped channel info: %v", err)
+		log.Printf("⚠️ [ANNANPED-CHECK] Failed to get Ananped channel info: %v", err)
 		// Continue even if we can't get channel info
 		channelInfo = map[string]interface{}{
 			"error": "Could not retrieve channel info",
-			"id":    AnnanpedChannelID,
-			"title": "Annanped",
+			"id":    AnanpedChannelID,
+			"title": "Ananped",
 		}
 	}
 
 	// Create celebration message
 	var celebrationMessage string
 	if isSubscribed {
-		celebrationMessage = "🎉 Thank you for being part of the Annanped family! You're helping us celebrate 10M subscribers! 🎉"
+		celebrationMessage = "🎉 Thank you for being part of the Ananped family! You're helping us celebrate 10M subscribers! 🎉"
 	} else {
-		celebrationMessage = "Join the Annanped family and help us celebrate 10M subscribers! Subscribe now! 📺"
+		celebrationMessage = "Join the Ananped family and help us celebrate 10M subscribers! Subscribe now! 📺"
 	}
 
-	log.Printf("✅ [ANNANPED-CHECK] Annanped subscription check completed successfully")
+	log.Printf("✅ [ANNANPED-CHECK] Ananped subscription check completed successfully")
 
 	// Send response
-	response := AnnanpedResponse{
+	response := AnanpedResponse{
 		Success:            true,
-		Message:            "Annanped subscription check completed",
+		Message:            "Ananped subscription check completed",
 		IsSubscribed:       isSubscribed,
 		UserInfo:           userInfo,
 		ChannelInfo:        channelInfo,
@@ -185,12 +185,12 @@ func getChannelInfoWithAPIKey(service *youtube.Service, channelID string) (map[s
 	return channelData, nil
 }
 
-// checkAnnanpedSubscription implements a special check for Annanped subscription
+// checkAnanpedSubscription implements a special check for Ananped subscription
 // Since API key authentication can't verify subscriptions directly, this is a demo implementation
-func checkAnnanpedSubscription(userChannelID, token string) bool {
-	log.Printf("🎉 [ANNANPED-SPECIAL] Performing special Annanped subscription check")
+func checkAnanpedSubscription(userChannelID, token string) bool {
+	log.Printf("🎉 [ANNANPED-SPECIAL] Performing special Ananped subscription check")
 	
-	// For the Annanped 10M celebration, we'll implement a special logic:
+	// For the Ananped 10M celebration, we'll implement a special logic:
 	// 1. If user has a valid token, consider them "subscribed" for celebration purposes
 	// 2. This is a demo/celebration feature, not actual subscription verification
 	
@@ -212,9 +212,9 @@ func getUserInfoFallback(token string) map[string]interface{} {
 	
 	return map[string]interface{}{
 		"id":    userID,
-		"name":  "Annanped Fan",
+		"name":  "Ananped Fan",
 		"email": userID + "@annanpedfan.com",
-		"note":  "User info generated for Annanped celebration (API key mode)",
+		"note":  "User info generated for Ananped celebration (API key mode)",
 	}
 }
 
@@ -226,9 +226,9 @@ func generateHash(input string, length int) string {
 	return input[:length]
 }
 
-// sendAnnanpedErrorResponse sends a standardized error response for Annanped endpoints
-func sendAnnanpedErrorResponse(w http.ResponseWriter, message string, statusCode int) {
-	response := AnnanpedResponse{
+// sendAnanpedErrorResponse sends a standardized error response for Ananped endpoints
+func sendAnanpedErrorResponse(w http.ResponseWriter, message string, statusCode int) {
+	response := AnanpedResponse{
 		Success: false,
 		Message: message,
 	}

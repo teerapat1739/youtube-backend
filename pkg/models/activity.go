@@ -4,6 +4,12 @@ import (
 	"time"
 )
 
+// Constants for activity IDs
+const (
+	// ActiveActivityUUID represents the UUID for the "active" activity in the database
+	ActiveActivityUUID = "550e8400-e29b-41d4-a716-446655440000"
+)
+
 // Activity represents a promotional activity
 type Activity struct {
 	ID          string    `json:"id"`
@@ -32,4 +38,13 @@ type ContactForm struct {
 	Email       string `json:"email"`
 	Phone       string `json:"phone,omitempty"`
 	AcceptTerms bool   `json:"accept_terms"`
+}
+
+// ResolveActivityID converts activity identifier to proper UUID
+// "active" -> ActiveActivityUUID, otherwise returns the input unchanged
+func ResolveActivityID(activityID string) string {
+	if activityID == "active" {
+		return ActiveActivityUUID
+	}
+	return activityID
 }

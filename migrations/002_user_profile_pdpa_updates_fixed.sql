@@ -97,7 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_user_terms_accepted_at ON user_terms_acceptance(a
 
 -- 5. Insert initial terms and PDPA versions (FIXED)
 INSERT INTO terms_versions (version, type, content, active) 
-SELECT '1.0', 'terms', '1. ผู้เข้าร่วมต้องเป็นผู้ติดตาม (Subscribe) ช่อง Annanped บน YouTube
+SELECT '1.0', 'terms', '1. ผู้เข้าร่วมต้องเป็นผู้ติดตาม (Subscribe) ช่อง Ananped บน YouTube
 2. ข้อมูลที่กรอกต้องเป็นข้อมูลจริงและถูกต้อง
 3. หากพบว่าข้อมูลเป็นเท็จ ทางช่องสงวนสิทธิ์ในการตัดสิทธิ์การเข้าร่วม
 4. การตัดสินของทางช่องถือเป็นที่สุด

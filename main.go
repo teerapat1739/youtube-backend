@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gamemini/youtube/pkg/api"
 	"github.com/gamemini/youtube/pkg/auth/be"
@@ -131,8 +132,8 @@ func main() {
 	}).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/join-activity", api.HandleJoinActivity).Methods("POST")
 
-	// Annanped celebration routes
-	router.HandleFunc("/api/annanped/subscription-check", api.HandleAnnanpedSubscriptionCheck).Methods("GET", "OPTIONS")
+	// Ananped celebration routes
+	router.HandleFunc("/api/ananped/subscription-check", api.HandleAnanpedSubscriptionCheck).Methods("GET", "OPTIONS")
 
 	// Enhanced YouTube API routes
 	router.HandleFunc("/api/user-info", authHandlers.HandleUserInfo).Methods("GET", "OPTIONS")
@@ -160,56 +161,144 @@ func main() {
 	}).Methods("GET", "OPTIONS")
 
 	// New API routes for the voting system
-	// Voting system routes
+	// Voting system routes with hardcoded teams
 	router.HandleFunc("/api/activities/active", func(w http.ResponseWriter, r *http.Request) {
-		activityService := services.NewActivityService()
-		activity, err := activityService.GetActiveActivity(r.Context())
+		log.Printf("🎯 [API] GET /api/activities/active - Request from %s", r.RemoteAddr)
+		
+		// Extract user ID for personalized response
+		_, _, userID, err := extractUserFromToken(r)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("❌ [API] Failed to extract user from token: %v", err)
+			// For now, use a default userID for anonymous users
+			userID = "anonymous-" + fmt.Sprintf("%d", time.Now().Unix())
+		}
+		
+		teamService := services.NewTeamService()
+		activityID := "active" // Use "active" as the default activity ID
+		
+		activity, err := teamService.GetActivityWithTeams(r.Context(), activityID, userID)
+		if err != nil {
+			log.Printf("❌ [API] Failed to get activity with teams: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to get activity: %v", err), http.StatusInternalServerError)
 			return
 		}
+		
+		log.Printf("✅ [API] Successfully retrieved activity with %d teams", len(activity.Teams))
+		
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(activity)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    activity,
+		})
 	}).Methods("GET", "OPTIONS")
 
 	router.HandleFunc("/api/activities/{id}/teams", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		activityID := vars["id"]
-		activityService := services.NewActivityService()
-		teams, err := activityService.GetTeams(r.Context(), activityID)
+		log.Printf("🏆 [API] GET /api/activities/%s/teams", activityID)
+		
+		// Extract user ID for personalized response
+		_, _, userID, err := extractUserFromToken(r)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("❌ [API] Failed to extract user from token: %v", err)
+			userID = "anonymous-" + fmt.Sprintf("%d", time.Now().Unix())
+		}
+		
+		teamService := services.NewTeamService()
+		teams, err := teamService.GetTeamsWithVotes(r.Context(), activityID)
+		if err != nil {
+			log.Printf("❌ [API] Failed to get teams: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to get teams: %v", err), http.StatusInternalServerError)
 			return
 		}
+		
+		// Get user vote status
+		userVote, err := teamService.GetUserVoteStatus(r.Context(), userID, activityID)
+		if err != nil {
+			log.Printf("❌ [API] Failed to get user vote status: %v", err)
+			userVote = &models.VotingStatus{HasVoted: false}
+		}
+		
+		log.Printf("✅ [API] Successfully retrieved %d teams", len(teams))
+		
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"teams":       teams,
-			"activity_id": activityID,
+			"success":     true,
+			"data": map[string]interface{}{
+				"teams":       teams,
+				"activity_id": activityID,
+				"user_vote":   userVote,
+			},
 		})
 	}).Methods("GET", "OPTIONS")
 
 	router.HandleFunc("/api/activities/{id}/vote", func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		activityID := vars["id"]
+		log.Printf("🗳️  [API] POST /api/activities/%s/vote", activityID)
+		
 		var voteRequest models.CreateVoteRequest
 		if err := json.NewDecoder(r.Body).Decode(&voteRequest); err != nil {
+			log.Printf("❌ [API] Invalid request body: %v", err)
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
+		
 		_, _, userID, err := extractUserFromToken(r)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Failed to extract user from token: %v", err), http.StatusUnauthorized)
+			log.Printf("❌ [API] Failed to extract user from token: %v", err)
+			http.Error(w, fmt.Sprintf("Authentication required: %v", err), http.StatusUnauthorized)
 			return
 		}
-		activityService := services.NewActivityService()
-		response, err := activityService.SubmitVote(r.Context(), userID, voteRequest.TeamID, activityID)
+		
+		log.Printf("🔐 [API] Vote request - UserID: %s, TeamID: %s", userID, voteRequest.TeamID)
+		
+		teamService := services.NewTeamService()
+		response, err := teamService.SubmitVote(r.Context(), userID, voteRequest.TeamID, activityID)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("❌ [API] Failed to submit vote: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to submit vote: %v", err), http.StatusBadRequest)
 			return
 		}
+		
+		log.Printf("✅ [API] Vote submitted successfully")
+		
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    response,
+		})
 	}).Methods("POST", "OPTIONS")
+
+	// Add vote status endpoint
+	router.HandleFunc("/api/activities/{id}/vote-status", func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		activityID := vars["id"]
+		log.Printf("📊 [API] GET /api/activities/%s/vote-status", activityID)
+		
+		_, _, userID, err := extractUserFromToken(r)
+		if err != nil {
+			log.Printf("❌ [API] Failed to extract user from token: %v", err)
+			http.Error(w, fmt.Sprintf("Authentication required: %v", err), http.StatusUnauthorized)
+			return
+		}
+		
+		teamService := services.NewTeamService()
+		voteStatus, err := teamService.GetUserVoteStatus(r.Context(), userID, activityID)
+		if err != nil {
+			log.Printf("❌ [API] Failed to get vote status: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to get vote status: %v", err), http.StatusInternalServerError)
+			return
+		}
+		
+		log.Printf("✅ [API] Vote status retrieved - HasVoted: %v", voteStatus.HasVoted)
+		
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    voteStatus,
+		})
+	}).Methods("GET", "OPTIONS")
 
 	// Enhanced user profile routes with proper authentication
 	router.HandleFunc("/api/user/profile", authHandlers.HandleGetUserProfile).Methods("GET", "OPTIONS")

@@ -74,7 +74,7 @@ CREATE INDEX IF NOT EXISTS idx_user_sessions_token ON user_sessions(session_toke
 -- Insert sample activity for testing
 INSERT INTO activities (name, description, start_date, end_date, status, max_participants) 
 VALUES (
-    'Annanped 8M Subscribers Celebration',
+    'Ananped 8M Subscribers Celebration',
     'Celebrate 8 million subscribers with voting activity',
     NOW(),
     NOW() + INTERVAL '30 days',
@@ -91,7 +91,7 @@ SELECT
     'Team ' || team_name || ' for the celebration'
 FROM activities a
 CROSS JOIN (VALUES ('A'), ('B'), ('C'), ('D'), ('E'), ('F'), ('G'), ('H')) AS t(team_name)
-WHERE a.name = 'Annanped 8M Subscribers Celebration'
+WHERE a.name = 'Ananped 8M Subscribers Celebration'
 ON CONFLICT DO NOTHING;
 
 -- Enable Row Level Security (RLS)
