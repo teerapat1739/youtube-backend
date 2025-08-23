@@ -3,12 +3,12 @@
 
 -- Insert the 6 hardcoded teams if they don't exist
 INSERT INTO teams (id, name, display_name, description, activity_id) VALUES
-('550e8400-e29b-41d4-a716-446655440001', 'A', 'Team A', 'Team A for the Ananped 10M celebration', '550e8400-e29b-41d4-a716-446655440000'),
-('550e8400-e29b-41d4-a716-446655440002', 'B', 'Team B', 'Team B for the Ananped 10M celebration', '550e8400-e29b-41d4-a716-446655440000'),
-('550e8400-e29b-41d4-a716-446655440003', 'C', 'Team C', 'Team C for the Ananped 10M celebration', '550e8400-e29b-41d4-a716-446655440000'),
-('550e8400-e29b-41d4-a716-446655440004', 'D', 'Team D', 'Team D for the Ananped 10M celebration', '550e8400-e29b-41d4-a716-446655440000'),
-('550e8400-e29b-41d4-a716-446655440005', 'E', 'Team E', 'Team E for the Ananped 10M celebration', '550e8400-e29b-41d4-a716-446655440000'),
-('550e8400-e29b-41d4-a716-446655440006', 'F', 'Team F', 'Team F for the Ananped 10M celebration', '550e8400-e29b-41d4-a716-446655440000')
+('550e8400-e29b-41d4-a716-446655440001', 'A', 'Team Crimson', 'Team Crimson for the Ananped 8M celebration', '550e8400-e29b-41d4-a716-446655440000'),
+('550e8400-e29b-41d4-a716-446655440002', 'B', 'Team Azure', 'Team Azure for the Ananped 8M celebration', '550e8400-e29b-41d4-a716-446655440000'),
+('550e8400-e29b-41d4-a716-446655440003', 'C', 'Team Golden', 'Team Golden for the Ananped 8M celebration', '550e8400-e29b-41d4-a716-446655440000'),
+('550e8400-e29b-41d4-a716-446655440004', 'D', 'Team Emerald', 'Team Emerald for the Ananped 8M celebration', '550e8400-e29b-41d4-a716-446655440000'),
+('550e8400-e29b-41d4-a716-446655440005', 'E', 'Team Purple', 'Team Purple for the Ananped 8M celebration', '550e8400-e29b-41d4-a716-446655440000'),
+('550e8400-e29b-41d4-a716-446655440006', 'F', 'Team Silver', 'Team Silver for the Ananped 8M celebration', '550e8400-e29b-41d4-a716-446655440000')
 ON CONFLICT (id) DO NOTHING;
 
 -- Verify the teams were created

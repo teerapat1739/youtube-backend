@@ -47,27 +47,51 @@ func loadEnv() {
 	}
 }
 
+// getAllowedOrigins reads CORS allowed origins from environment variable
+// Returns an error if ALLOWED_ORIGINS is not set or empty to make configuration explicit
+func getAllowedOrigins() ([]string, error) {
+	// Try to get origins from environment variable
+	envOrigins := os.Getenv("ALLOWED_ORIGINS")
+	if envOrigins == "" {
+		return nil, fmt.Errorf("ALLOWED_ORIGINS environment variable is required but not set")
+	}
+
+	// Parse comma-separated origins from environment
+	origins := make([]string, 0)
+	for _, origin := range strings.Split(envOrigins, ",") {
+		// Trim whitespace and skip empty strings
+		trimmed := strings.TrimSpace(origin)
+		if trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+
+	// If no valid origins found after parsing, return error
+	if len(origins) == 0 {
+		return nil, fmt.Errorf("ALLOWED_ORIGINS contains no valid origins after parsing")
+	}
+
+	log.Printf("🌐 [CORS] Using origins from ALLOWED_ORIGINS environment variable: %v", origins)
+	return origins, nil
+}
+
+// Global variable to store validated allowed origins
+var globalAllowedOrigins []string
+
 // CORS middleware
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		
+
 		// Log CORS request for debugging
 		log.Printf("🌐 [CORS] Request from origin: %s, Method: %s, Path: %s", origin, r.Method, r.URL.Path)
 
 		// Get frontend URL from environment variable
 		frontendURL := os.Getenv("FRONTEND_URL")
-		
-		// Allow specific origins
-		allowedOrigins := []string{
-			"http://localhost:3000",
-			"http://localhost:3001",
-			"http://localhost:3002",
-			"http://localhost:5173",        // Vite default
-			"https://poc-461500.web.app",   // Firebase hosting
-			"https://ananped.netlify.app",  // Production frontend
-		}
-		
+
+		// Use pre-validated allowed origins
+		allowedOrigins := globalAllowedOrigins
+
 		// Add FRONTEND_URL to allowed origins if it's set and not already included
 		if frontendURL != "" {
 			found := false
@@ -78,11 +102,13 @@ func corsMiddleware(next http.Handler) http.Handler {
 				}
 			}
 			if !found {
+				// Create a copy to avoid modifying global slice
+				allowedOrigins = append([]string{}, allowedOrigins...)
 				allowedOrigins = append(allowedOrigins, frontendURL)
 				log.Printf("🌐 [CORS] Added FRONTEND_URL to allowed origins: %s", frontendURL)
 			}
 		}
-		
+
 		// Log allowed origins for debugging on first request (to avoid spam)
 		if r.URL.Path == "/health" && r.Method == "GET" {
 			log.Printf("🌐 [CORS] Current allowed origins: %v", allowedOrigins)
@@ -132,6 +158,15 @@ func corsMiddleware(next http.Handler) http.Handler {
 func main() {
 	// Load environment variables from .env.local file
 	loadEnv()
+
+	// Validate required configuration early
+	fmt.Println("🔧 Validating configuration...")
+	var err error
+	globalAllowedOrigins, err = getAllowedOrigins()
+	if err != nil {
+		log.Fatalf("❌ [CONFIG] Failed to get allowed origins: %v", err)
+	}
+	fmt.Printf("✅ [CONFIG] ALLOWED_ORIGINS validated: %v\n", globalAllowedOrigins)
 
 	// Initialize database connection
 	fmt.Println("🔌 Initializing database connection...")
@@ -195,7 +230,7 @@ func main() {
 	// Voting system routes with hardcoded teams
 	router.HandleFunc("/api/activities/active", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("🎯 [API] GET /api/activities/active - Request from %s", r.RemoteAddr)
-		
+
 		// Extract user ID for personalized response
 		_, _, userID, err := extractUserFromToken(r)
 		if err != nil {
@@ -203,19 +238,19 @@ func main() {
 			// For now, use a default userID for anonymous users
 			userID = "anonymous-" + fmt.Sprintf("%d", time.Now().Unix())
 		}
-		
+
 		teamService := services.NewTeamService()
 		activityID := "active" // Use "active" as the default activity ID
-		
+
 		activity, err := teamService.GetActivityWithTeams(r.Context(), activityID, userID)
 		if err != nil {
 			log.Printf("❌ [API] Failed to get activity with teams: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to get activity: %v", err), http.StatusInternalServerError)
 			return
 		}
-		
+
 		log.Printf("✅ [API] Successfully retrieved activity with %d teams", len(activity.Teams))
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
@@ -227,14 +262,14 @@ func main() {
 		vars := mux.Vars(r)
 		activityID := vars["id"]
 		log.Printf("🏆 [API] GET /api/activities/%s/teams", activityID)
-		
+
 		// Extract user ID for personalized response
 		_, _, userID, err := extractUserFromToken(r)
 		if err != nil {
 			log.Printf("❌ [API] Failed to extract user from token: %v", err)
 			userID = "anonymous-" + fmt.Sprintf("%d", time.Now().Unix())
 		}
-		
+
 		teamService := services.NewTeamService()
 		teams, err := teamService.GetTeamsWithVotes(r.Context(), activityID)
 		if err != nil {
@@ -242,19 +277,19 @@ func main() {
 			http.Error(w, fmt.Sprintf("Failed to get teams: %v", err), http.StatusInternalServerError)
 			return
 		}
-		
+
 		// Get user vote status
 		userVote, err := teamService.GetUserVoteStatus(r.Context(), userID, activityID)
 		if err != nil {
 			log.Printf("❌ [API] Failed to get user vote status: %v", err)
 			userVote = &models.VotingStatus{HasVoted: false}
 		}
-		
+
 		log.Printf("✅ [API] Successfully retrieved %d teams", len(teams))
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":     true,
+			"success": true,
 			"data": map[string]interface{}{
 				"teams":       teams,
 				"activity_id": activityID,
@@ -267,23 +302,23 @@ func main() {
 		vars := mux.Vars(r)
 		activityID := vars["id"]
 		log.Printf("🗳️  [API] POST /api/activities/%s/vote", activityID)
-		
+
 		var voteRequest models.CreateVoteRequest
 		if err := json.NewDecoder(r.Body).Decode(&voteRequest); err != nil {
 			log.Printf("❌ [API] Invalid request body: %v", err)
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
-		
+
 		_, _, userID, err := extractUserFromToken(r)
 		if err != nil {
 			log.Printf("❌ [API] Failed to extract user from token: %v", err)
 			http.Error(w, fmt.Sprintf("Authentication required: %v", err), http.StatusUnauthorized)
 			return
 		}
-		
+
 		log.Printf("🔐 [API] Vote request - UserID: %s, TeamID: %s", userID, voteRequest.TeamID)
-		
+
 		teamService := services.NewTeamService()
 		response, err := teamService.SubmitVote(r.Context(), userID, voteRequest.TeamID, activityID)
 		if err != nil {
@@ -291,9 +326,9 @@ func main() {
 			http.Error(w, fmt.Sprintf("Failed to submit vote: %v", err), http.StatusBadRequest)
 			return
 		}
-		
+
 		log.Printf("✅ [API] Vote submitted successfully")
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
@@ -306,14 +341,14 @@ func main() {
 		vars := mux.Vars(r)
 		activityID := vars["id"]
 		log.Printf("📊 [API] GET /api/activities/%s/vote-status", activityID)
-		
+
 		_, _, userID, err := extractUserFromToken(r)
 		if err != nil {
 			log.Printf("❌ [API] Failed to extract user from token: %v", err)
 			http.Error(w, fmt.Sprintf("Authentication required: %v", err), http.StatusUnauthorized)
 			return
 		}
-		
+
 		teamService := services.NewTeamService()
 		voteStatus, err := teamService.GetUserVoteStatus(r.Context(), userID, activityID)
 		if err != nil {
@@ -321,9 +356,9 @@ func main() {
 			http.Error(w, fmt.Sprintf("Failed to get vote status: %v", err), http.StatusInternalServerError)
 			return
 		}
-		
+
 		log.Printf("✅ [API] Vote status retrieved - HasVoted: %v", voteStatus.HasVoted)
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
@@ -386,7 +421,7 @@ func main() {
 	} else {
 		fmt.Printf("🔑 GOOGLE_CLIENT_SECRET: (not set)\n")
 	}
-	
+
 	// Additional YouTube API related environment variables
 	youtubeAPIKey := os.Getenv("YOUTUBE_API_KEY")
 	if youtubeAPIKey == "" {
@@ -407,6 +442,7 @@ func main() {
 	}())
 	fmt.Printf("🌐 FRONTEND_URL: %s\n", os.Getenv("FRONTEND_URL"))
 	fmt.Printf("🌐 REDIRECT_URL: %s\n", os.Getenv("REDIRECT_URL"))
+	fmt.Printf("🌐 ALLOWED_ORIGINS: %s\n", os.Getenv("ALLOWED_ORIGINS"))
 
 	// Start server
 	fmt.Printf("🚀 Server is running on port %s\n", port)
