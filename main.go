@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -140,7 +141,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Origin, User-Agent, DNT, Cache-Control, X-Mx-ReqToken, Keep-Alive, X-Requested-With, If-Modified-Since, sec-ch-ua, sec-ch-ua-mobile, sec-ch-ua-platform, Referer")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Origin, User-Agent, DNT, Cache-Control, X-Mx-ReqToken, Keep-Alive, X-Requested-With, If-Modified-Since, sec-ch-ua, sec-ch-ua-mobile, sec-ch-ua-platform, Referer, Idempotency-Key")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Max-Age", "86400")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Type")
@@ -184,6 +185,7 @@ func main() {
 	// Enhanced Auth routes with proper user creation/update
 	router.HandleFunc("/auth/google/login", authHandlers.HandleGoogleLogin).Methods("GET")
 	router.HandleFunc("/auth/google/callback", authHandlers.HandleGoogleCallback).Methods("GET")
+	router.HandleFunc("/auth/logout", authHandlers.HandleLogout).Methods("POST", "OPTIONS")
 	// BE Login route (using be package)
 	router.HandleFunc("/auth/be/login", func(w http.ResponseWriter, r *http.Request) {
 		be.Login(w, r)
@@ -225,6 +227,9 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(subscriptions)
 	}).Methods("GET", "OPTIONS")
+
+	// Vote counts endpoint with caching
+	router.HandleFunc("/api/activities/{id}/counts", api.HandleGetVoteCounts).Methods("GET", "OPTIONS")
 
 	// New API routes for the voting system
 	// Voting system routes with hardcoded teams
@@ -329,6 +334,13 @@ func main() {
 
 		log.Printf("✅ [API] Vote submitted successfully")
 
+		// Best-effort cache increment after successful vote
+		voteCountService := services.NewVoteCountService()
+		if err := voteCountService.Increment(r.Context(), activityID, voteRequest.TeamID); err != nil {
+			// Log but don't fail the request
+			log.Printf("⚠️ [API] Failed to increment cache for vote: %v", err)
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
@@ -379,25 +391,20 @@ func main() {
 	router.HandleFunc("/api/users/profile", authHandlers.HandleGetUserProfile).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/users/profile", authHandlers.HandleUpdateUserProfile).Methods("PUT", "OPTIONS")
 
-	// Health check endpoint
+	// Health check endpoint with simple DB ping only
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		// Check database health
-		dbHealth := "connected"
-		if err := database.HealthCheck(); err != nil {
-			dbHealth = "disconnected"
-		}
+		w.Header().Set("Content-Type", "application/json")
 
 		health := map[string]interface{}{
 			"status":    "healthy",
-			"timestamp": "2025-01-20T00:00:00Z",
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
 			"version":   "1.0.0",
-			"services": map[string]string{
-				"database": dbHealth,
+			"services": map[string]interface{}{
+				"database": checkDatabaseHealth(),
 				"api":      "running",
 			},
 		}
 
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(health)
 	}).Methods("GET")
 
@@ -447,6 +454,31 @@ func main() {
 	// Start server
 	fmt.Printf("🚀 Server is running on port %s\n", port)
 	log.Fatal(http.ListenAndServe(":"+port, router))
+}
+
+// checkDatabaseHealth checks if the database is healthy
+func checkDatabaseHealth() map[string]interface{} {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	db := database.GetDB()
+	if db == nil {
+		return map[string]interface{}{
+			"status": "unhealthy",
+			"error":  "database connection not initialized",
+		}
+	}
+
+	if err := db.Ping(ctx); err != nil {
+		return map[string]interface{}{
+			"status": "unhealthy",
+			"error":  err.Error(),
+		}
+	}
+
+	return map[string]interface{}{
+		"status": "healthy",
+	}
 }
 
 // extractUserFromToken extracts user information from JWT token with proper verification

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/gamemini/youtube/pkg/models"
@@ -67,8 +68,16 @@ func (s *UserService) CreateOrUpdateUserFromOAuth(ctx context.Context, googleID,
 	}
 
 	if err := s.userRepo.CreateUserSession(ctx, session); err != nil {
-		log.Printf("⚠️  Failed to create session (continuing): %v", err)
-		// Don't fail the request if session creation fails
+		log.Printf("❌ Failed to create user session: %v", err)
+		// Check if it's the varchar(255) issue specifically
+		if strings.Contains(err.Error(), "value too long for type character varying(255)") {
+			log.Printf("🔧 Detected session token length issue - run migration 008_fix_session_token_length.sql")
+			return nil, fmt.Errorf("session creation failed due to token length limitation - database migration required: %w", err)
+		}
+		// For other session creation issues, log but continue (temporary degraded service)
+		log.Printf("⚠️  Session creation failed but continuing with authentication - sessions may not be properly tracked")
+	} else {
+		log.Printf("✅ User session created successfully - SessionID: %s", session.ID)
 	}
 
 	return &UserAuthData{
@@ -110,8 +119,16 @@ func (s *UserService) CreateOrUpdateUserFromOAuthWithTokens(ctx context.Context,
 	}
 
 	if err := s.userRepo.CreateUserSession(ctx, session); err != nil {
-		log.Printf("⚠️  Failed to create session (continuing): %v", err)
-		// Don't fail the request if session creation fails
+		log.Printf("❌ Failed to create user session: %v", err)
+		// Check if it's the varchar(255) issue specifically
+		if strings.Contains(err.Error(), "value too long for type character varying(255)") {
+			log.Printf("🔧 Detected session token length issue - run migration 008_fix_session_token_length.sql")
+			return nil, fmt.Errorf("session creation failed due to token length limitation - database migration required: %w", err)
+		}
+		// For other session creation issues, log but continue (temporary degraded service)
+		log.Printf("⚠️  Session creation failed but continuing with authentication - sessions may not be properly tracked")
+	} else {
+		log.Printf("✅ User session created successfully - SessionID: %s", session.ID)
 	}
 
 	return &UserAuthData{
@@ -197,15 +214,21 @@ func (s *UserService) AcceptTerms(ctx context.Context, userID, termsVersion, pdp
 
 // GenerateAccessToken generates a JWT access token for the user
 func (s *UserService) GenerateAccessToken(user *models.User) (string, time.Time, error) {
-	expiresAt := time.Now().Add(24 * time.Hour) // 24 hour expiration
+	// Extended expiration to 7 days for better UX (reduced auth interruptions)
+	// Frontend should handle token refresh before expiration
+	expiresAt := time.Now().Add(7 * 24 * time.Hour) // 7 days expiration
 
+	now := time.Now()
 	claims := jwt.MapClaims{
 		"user_id":   user.ID,
 		"google_id": user.GoogleID,
 		"email":     user.Email,
 		"exp":       expiresAt.Unix(),
-		"iat":       time.Now().Unix(),
+		"iat":       now.Unix(),
+		"nbf":       now.Unix(), // Not before - prevents token use before issued
 		"iss":       "youtube-activity-platform",
+		"aud":       "youtube-activity-frontend", // Audience - specific to our frontend
+		"sub":       user.ID, // Subject - standard JWT claim for user identity
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -214,6 +237,7 @@ func (s *UserService) GenerateAccessToken(user *models.User) (string, time.Time,
 		return "", time.Time{}, fmt.Errorf("failed to sign token: %w", err)
 	}
 
+	log.Printf("🔑 Generated JWT token for user %s (expires: %s)", user.ID, expiresAt.Format(time.RFC3339))
 	return tokenString, expiresAt, nil
 }
 
@@ -227,13 +251,44 @@ func (s *UserService) ValidateAccessToken(tokenString string) (*models.User, err
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("invalid token: %w", err)
+		// Provide more specific error messages for common JWT issues
+		// Check for specific error types in jwt/v5
+		errorMsg := err.Error()
+		switch {
+		case strings.Contains(errorMsg, "token is malformed"):
+			return nil, fmt.Errorf("token is malformed")
+		case strings.Contains(errorMsg, "token has expired") || strings.Contains(errorMsg, "token is expired"):
+			return nil, fmt.Errorf("token has expired")
+		case strings.Contains(errorMsg, "token used before valid") || strings.Contains(errorMsg, "not valid yet"):
+			return nil, fmt.Errorf("token is not valid yet")
+		case strings.Contains(errorMsg, "issuer") || strings.Contains(errorMsg, "audience"):
+			return nil, fmt.Errorf("token has invalid claims: issuer or audience mismatch")
+		case strings.Contains(errorMsg, "signature is invalid"):
+			return nil, fmt.Errorf("token has invalid signature")
+		default:
+			return nil, fmt.Errorf("invalid token: %w", err)
+		}
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		// Validate required claims
 		userID := fmt.Sprintf("%v", claims["user_id"])
 		if userID == "" {
-			return nil, fmt.Errorf("invalid token: missing user_id")
+			return nil, fmt.Errorf("invalid token: missing user_id claim")
+		}
+
+		// Validate issuer if present
+		if iss, ok := claims["iss"].(string); ok {
+			if iss != "youtube-activity-platform" {
+				return nil, fmt.Errorf("invalid token: invalid issuer")
+			}
+		}
+
+		// Validate audience if present
+		if aud, ok := claims["aud"].(string); ok {
+			if aud != "youtube-activity-frontend" {
+				return nil, fmt.Errorf("invalid token: invalid audience")
+			}
 		}
 
 		// Fetch current user data from database
@@ -242,6 +297,7 @@ func (s *UserService) ValidateAccessToken(tokenString string) (*models.User, err
 			return nil, fmt.Errorf("user not found: %w", err)
 		}
 
+		log.Printf("✅ Token validated successfully for user %s", userID)
 		return user, nil
 	}
 
@@ -313,18 +369,60 @@ func (s *UserService) GetUserProfileWithVoteStatus(ctx context.Context, userID s
 	return response, nil
 }
 
-// CleanupExpiredSessions removes expired user sessions
-func (s *UserService) CleanupExpiredSessions(ctx context.Context) error {
+// CleanupExpiredSessions removes expired user sessions and returns count deleted
+func (s *UserService) CleanupExpiredSessions(ctx context.Context) (int64, error) {
 	log.Println("🧹 Cleaning up expired sessions...")
 	
-	err := s.userRepo.CleanExpiredSessions(ctx)
+	deletedCount, err := s.userRepo.CleanExpiredSessions(ctx)
 	if err != nil {
 		log.Printf("❌ Failed to cleanup expired sessions: %v", err)
-		return fmt.Errorf("failed to cleanup expired sessions: %w", err)
+		return 0, fmt.Errorf("failed to cleanup expired sessions: %w", err)
 	}
 	
-	log.Println("✅ Expired sessions cleaned up successfully")
-	return nil
+	if deletedCount > 0 {
+		log.Printf("✅ Cleaned up %d expired sessions", deletedCount)
+	} else {
+		log.Println("✅ No expired sessions to clean up")
+	}
+	
+	return deletedCount, nil
+}
+
+// StartSessionCleanupScheduler starts a background goroutine that periodically cleans expired sessions
+func (s *UserService) StartSessionCleanupScheduler(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = 1 * time.Hour // Default to 1 hour if invalid interval
+	}
+	
+	log.Printf("🚀 Starting session cleanup scheduler (interval: %v)", interval)
+	
+	// Initial cleanup on startup
+	go func() {
+		if count, err := s.CleanupExpiredSessions(ctx); err != nil {
+			log.Printf("⚠️  Initial session cleanup failed: %v", err)
+		} else if count > 0 {
+			log.Printf("🧹 Initial cleanup removed %d expired sessions", count)
+		}
+	}()
+	
+	// Periodic cleanup
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				log.Println("🛑 Session cleanup scheduler stopped due to context cancellation")
+				return
+			case <-ticker.C:
+				if count, err := s.CleanupExpiredSessions(context.Background()); err != nil {
+					log.Printf("⚠️  Scheduled session cleanup failed: %v", err)
+				} else if count > 0 {
+					log.Printf("🧹 Scheduled cleanup removed %d expired sessions", count)
+				}
+			}
+		}
+	}()
 }
 
 // GetUserOAuthTokens retrieves stored OAuth tokens for a user

@@ -283,16 +283,17 @@ func (r *UserRepository) DeleteUserSession(ctx context.Context, sessionToken str
 	return nil
 }
 
-// CleanExpiredSessions cleans up expired user sessions
-func (r *UserRepository) CleanExpiredSessions(ctx context.Context) error {
+// CleanExpiredSessions cleans up expired user sessions and returns count of deleted sessions
+func (r *UserRepository) CleanExpiredSessions(ctx context.Context) (int64, error) {
 	query := `DELETE FROM user_sessions WHERE expires_at <= NOW()`
 
-	_, err := database.GetDB().Exec(ctx, query)
+	result, err := database.GetDB().Exec(ctx, query)
 	if err != nil {
-		return fmt.Errorf("failed to clean expired sessions: %v", err)
+		return 0, fmt.Errorf("failed to clean expired sessions: %v", err)
 	}
 
-	return nil
+	deletedCount := result.RowsAffected()
+	return deletedCount, nil
 }
 
 // UpsertUserFromOAuth creates or updates a user from OAuth data with proper race condition handling

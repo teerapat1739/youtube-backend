@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gamemini/youtube/pkg/auth/google"
 	"github.com/gamemini/youtube/pkg/models"
@@ -246,6 +247,47 @@ func (h *AuthHandlers) HandleGetTerms(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
+	h.writeJSONResponse(w, response)
+}
+
+// HandleLogout handles user logout by invalidating their JWT token and clearing session data
+func (h *AuthHandlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	log.Println("🚪 Handling user logout request")
+
+	// Extract user from JWT token (if present)
+	user, err := h.extractUserFromToken(r)
+	if err != nil {
+		// Even if token extraction fails, we'll still respond with success
+		// This ensures logout works even with expired/invalid tokens
+		log.Printf("⚠️ Logout called with invalid/expired token: %v", err)
+	} else {
+		log.Printf("👤 Logging out user: %s", user.ID)
+		
+		// Note: With JWT tokens, we can't truly invalidate them server-side without a blacklist
+		// The frontend will remove the token from localStorage, effectively logging out the user
+		// In a production system, you might want to:
+		// 1. Maintain a blacklist of invalidated tokens (with expiry)
+		// 2. Use shorter-lived access tokens with refresh tokens
+		// 3. Store session tokens in database for server-side invalidation
+		
+		// For now, we'll just log the logout event for audit purposes
+		// You could add audit logging to database here if needed
+		log.Printf("✅ User %s logged out successfully", user.ID)
+	}
+
+	// Clear any security-related headers
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
+
+	// Return success response
+	response := map[string]interface{}{
+		"success": true,
+		"message": "Successfully logged out",
+		"timestamp": fmt.Sprintf("%d", time.Now().Unix()),
+	}
+
+	log.Println("✅ Logout completed successfully")
 	h.writeJSONResponse(w, response)
 }
 

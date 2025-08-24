@@ -11,5 +11,10 @@ INSERT INTO teams (id, name, display_name, description, activity_id) VALUES
 ('550e8400-e29b-41d4-a716-446655440006', 'F', 'Team Silver', 'Team Silver for the Ananped 8M celebration', '550e8400-e29b-41d4-a716-446655440000')
 ON CONFLICT (id) DO NOTHING;
 
+-- Log completion
+INSERT INTO schema_migrations (version, applied_at) 
+VALUES ('006_create_hardcoded_teams', NOW()) 
+ON CONFLICT (version) DO NOTHING;
+
 -- Verify the teams were created
 SELECT id, name, description, activity_id FROM teams WHERE activity_id = '550e8400-e29b-41d4-a716-446655440000' ORDER BY name;

@@ -16,5 +16,10 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
+-- Log completion
+INSERT INTO schema_migrations (version, applied_at) 
+VALUES ('005_create_hardcoded_activity', NOW()) 
+ON CONFLICT (version) DO NOTHING;
+
 -- Verify the activity was created
 SELECT id, name, title, description, status FROM activities WHERE id = '550e8400-e29b-41d4-a716-446655440000';
