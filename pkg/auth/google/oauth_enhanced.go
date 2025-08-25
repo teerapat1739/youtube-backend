@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -41,7 +42,12 @@ func (h *EnhancedOAuthHandler) HandleLogin(w http.ResponseWriter, r *http.Reques
 	// Store state in session/cookie for validation (simplified for now)
 	// In production, you'd want to store this securely
 
-	url := h.oauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
+	// Configure OAuth to request offline access and force consent to guarantee refresh token
+	// Use "select_account consent" to ensure user sees consent screen even if previously authorized
+	url := h.oauthConfig.AuthCodeURL(state, 
+		oauth2.AccessTypeOffline,
+		oauth2.SetAuthURLParam("prompt", "select_account consent"),
+		oauth2.SetAuthURLParam("access_type", "offline"))
 	log.Printf("🔄 Redirecting to Google OAuth: %s", url)
 
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
@@ -83,6 +89,26 @@ func (h *EnhancedOAuthHandler) HandleCallback(w http.ResponseWriter, r *http.Req
 
 	log.Printf("✅ Retrieved user info from Google - ID: %s, Email: %s", userInfo.ID, userInfo.Email)
 
+	// Validate that we received a refresh token (critical for offline access)
+	if token.RefreshToken == "" {
+		log.Printf("❌ [CRITICAL] No refresh token received from Google OAuth!")
+		log.Printf("🔧 [DEBUG] OAuth Response Details:")
+		log.Printf("   - Access Token Length: %d", len(token.AccessToken))
+		log.Printf("   - Token Type: %s", token.TokenType)
+		log.Printf("   - Expires In: %v", token.Expiry.Sub(time.Now()))
+		log.Printf("   - Scopes: %v", h.oauthConfig.Scopes)
+		log.Printf("🔧 [FIX] User needs to revoke app access and re-authorize:")
+		log.Printf("   - Visit: https://myaccount.google.com/permissions")
+		log.Printf("   - Find your app and click 'Remove access'")
+		log.Printf("   - Re-authorize to get refresh token")
+		
+		// Store empty refresh token but continue (for partial functionality)
+		log.Printf("⚠️ [DEGRADED] Continuing with access token only - YouTube API calls may fail when token expires")
+	} else {
+		log.Printf("✅ [SUCCESS] Refresh token received successfully from Google OAuth")
+		log.Printf("🔑 [TOKEN] Refresh Token Length: %d characters", len(token.RefreshToken))
+	}
+
 	// Create OAuth token data
 	oauthTokenData := &models.OAuthTokenData{
 		AccessToken:  token.AccessToken,
@@ -119,12 +145,39 @@ func (h *EnhancedOAuthHandler) HandleCallback(w http.ResponseWriter, r *http.Req
 
 	// Redirect to frontend with both JWT token and Google access token
 	// JWT token for backend authentication, Google token for YouTube API
-	redirectURL := fmt.Sprintf("%s%s?token=%s&google_token=%s&user_id=%s",
-		frontendURL,
-		targetRoute,
-		authData.AccessToken,
-		token.AccessToken,
-		authData.User.ID)
+	// Use proper URL construction to avoid double question marks
+	baseURL, err := url.Parse(frontendURL + targetRoute)
+	if err != nil {
+		log.Printf("❌ Failed to parse base URL: %v", err)
+		http.Redirect(w, r, frontendURL+"/?error=url_construction_failed", http.StatusTemporaryRedirect)
+		return
+	}
+
+	// Create query parameters
+	params := url.Values{}
+	params.Add("token", authData.AccessToken)
+	params.Add("google_token", token.AccessToken)
+	params.Add("user_id", authData.User.ID)
+
+	// Combine base URL with existing query params if any
+	if baseURL.RawQuery != "" {
+		existingParams, err := url.ParseQuery(baseURL.RawQuery)
+		if err != nil {
+			log.Printf("❌ Failed to parse existing query parameters: %v", err)
+			http.Redirect(w, r, frontendURL+"/?error=url_construction_failed", http.StatusTemporaryRedirect)
+			return
+		}
+		// Add existing params to new params
+		for k, v := range existingParams {
+			for _, val := range v {
+				params.Add(k, val)
+			}
+		}
+	}
+
+	// Set the combined query parameters
+	baseURL.RawQuery = params.Encode()
+	redirectURL := baseURL.String()
 
 	log.Printf("🔄 Redirecting to frontend target route: %s", redirectURL)
 	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)

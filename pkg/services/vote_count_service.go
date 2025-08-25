@@ -3,7 +3,10 @@ package services
 import (
 	"context"
 	"fmt"
+	"log"
+	"math/rand"
 	"strconv"
+	"time"
 
 	"github.com/gamemini/youtube/pkg/cache"
 	"github.com/gamemini/youtube/pkg/repository"
@@ -21,7 +24,7 @@ func NewVoteCountService() *VoteCountService {
 	}
 }
 
-// GetCounts retrieves vote counts for an activity using simple cache-aside pattern
+// GetCounts retrieves vote counts for an activity using DB-read-then-cache strategy
 func (s *VoteCountService) GetCounts(ctx context.Context, activityID string) (map[string]int64, string, error) {
 	if activityID == "" {
 		activityID = "active"
@@ -40,21 +43,29 @@ func (s *VoteCountService) GetCounts(ctx context.Context, activityID string) (ma
 		return counts, "redis", nil
 	}
 	
-	// Fetch from database
+	// Cache miss - fetch from database
 	counts, err := s.voteRepo.GetCountsByActivity(ctx, activityID)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to get vote counts from database: %w", err)
 	}
 	
-	// Best-effort cache population
-	if len(counts) > 0 {
-		_ = cache.HSetAll(ctx, key, counts) // ignore errors for best-effort
-	}
+	// Cache the result with jittered TTL (fire-and-forget)
+	go func() {
+		// Create jittered TTL (9-11 seconds) to prevent thundering herd
+		jitter := time.Duration(rand.Intn(3)) * time.Second
+		ttl := 9*time.Second + jitter
+		
+		if err := cache.HSetAllWithTTL(context.Background(), key, counts, ttl); err != nil {
+			log.Printf("⚠️ Failed to cache vote counts: %v", err)
+		}
+	}()
 	
 	return counts, "db", nil
 }
 
 // Increment increments the vote count for a team in an activity (best-effort cache update)
+// DEPRECATED: This method is kept for backward compatibility but should not be used
+// Use InvalidateCache() instead for the new DB-read-then-cache strategy
 func (s *VoteCountService) Increment(ctx context.Context, activityID, teamID string) error {
 	if activityID == "" {
 		activityID = "active"
@@ -66,4 +77,11 @@ func (s *VoteCountService) Increment(ctx context.Context, activityID, teamID str
 	_ = cache.HIncrBy(ctx, key, teamID, 1) // ignore errors for best-effort
 	
 	return nil
+}
+
+// InvalidateCache is deprecated for high-concurrency scenarios
+// With 100k+ concurrent requests, use pure TTL-based expiration instead
+func (s *VoteCountService) InvalidateCache(ctx context.Context, activityID string) {
+	// No-op - let TTL handle cache expiration naturally
+	// This prevents thundering herd issues with high concurrency
 }

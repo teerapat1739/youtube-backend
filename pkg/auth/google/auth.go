@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 
 	"golang.org/x/oauth2"
@@ -95,7 +96,10 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	url := config.AuthCodeURL("state", oauth2.AccessTypeOffline)
+	// Configure OAuth to request offline access and force consent to guarantee refresh token
+	url := config.AuthCodeURL("state", 
+		oauth2.AccessTypeOffline,
+		oauth2.SetAuthURLParam("prompt", "consent"))
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
 
@@ -125,8 +129,22 @@ func CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Redirect to Vue frontend with the access token
-	redirectURL := fmt.Sprintf("%s/?token=%s", frontendURL, token.AccessToken)
+	// Redirect to Vue frontend with the access token using proper URL construction
+	baseURL, err := url.Parse(frontendURL + "/")
+	if err != nil {
+		log.Printf("❌ Failed to parse frontend URL: %v", err)
+		http.Redirect(w, r, frontendURL+"/?error=url_construction_failed", http.StatusTemporaryRedirect)
+		return
+	}
+
+	// Create query parameters
+	params := url.Values{}
+	params.Add("token", token.AccessToken)
+
+	// Set the query parameters
+	baseURL.RawQuery = params.Encode()
+	redirectURL := baseURL.String()
+
 	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
 }
 

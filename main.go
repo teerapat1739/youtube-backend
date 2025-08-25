@@ -16,6 +16,7 @@ import (
 	"github.com/gamemini/youtube/pkg/auth/google"
 	"github.com/gamemini/youtube/pkg/database"
 	"github.com/gamemini/youtube/pkg/handlers"
+	"github.com/gamemini/youtube/pkg/middleware"
 	"github.com/gamemini/youtube/pkg/models"
 	"github.com/gamemini/youtube/pkg/services"
 	"github.com/golang-jwt/jwt/v5"
@@ -179,6 +180,10 @@ func main() {
 	// Initialize enhanced authentication handlers
 	fmt.Println("🔐 Initializing enhanced authentication handlers...")
 	authHandlers := handlers.NewAuthHandlers()
+	
+	// Initialize admin middleware
+	fmt.Println("🛡️ Initializing admin middleware...")
+	adminMiddleware := middleware.NewAdminMiddleware()
 
 	router := mux.NewRouter()
 
@@ -334,12 +339,7 @@ func main() {
 
 		log.Printf("✅ [API] Vote submitted successfully")
 
-		// Best-effort cache increment after successful vote
-		voteCountService := services.NewVoteCountService()
-		if err := voteCountService.Increment(r.Context(), activityID, voteRequest.TeamID); err != nil {
-			// Log but don't fail the request
-			log.Printf("⚠️ [API] Failed to increment cache for vote: %v", err)
-		}
+		// Cache will expire naturally with TTL - no manual invalidation for high concurrency
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -386,6 +386,18 @@ func main() {
 	// Terms and PDPA routes
 	router.HandleFunc("/api/terms", authHandlers.HandleGetTerms).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/user/accept-terms", authHandlers.HandleAcceptTerms).Methods("POST", "OPTIONS")
+	
+	// Token status and re-authorization routes
+	router.HandleFunc("/api/user/token-status", api.HandleTokenStatus).Methods("GET", "OPTIONS")
+	router.HandleFunc("/api/user/force-reauth", api.HandleForceReauth).Methods("GET", "OPTIONS")
+	
+	// Admin authentication (no middleware required)
+	router.HandleFunc("/api/admin/login", api.HandleAdminLogin).Methods("POST", "OPTIONS")
+	
+	// Admin routes with middleware protection
+	adminRouter := router.PathPrefix("/api/admin").Subrouter()
+	adminRouter.Use(adminMiddleware.RequireAdmin)
+	adminRouter.HandleFunc("/subscription-check", api.HandleAdminSubscriptionCheck).Methods("POST", "OPTIONS")
 
 	// Legacy routes (plural) for backward compatibility
 	router.HandleFunc("/api/users/profile", authHandlers.HandleGetUserProfile).Methods("GET", "OPTIONS")

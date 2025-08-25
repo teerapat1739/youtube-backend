@@ -124,3 +124,46 @@ func HIncrBy(ctx context.Context, key, field string, by int64) error {
 	}
 	return nil
 }
+
+// HSetAllWithTTL sets multiple fields in a hash with TTL
+func HSetAllWithTTL(ctx context.Context, key string, values map[string]int64, ttl time.Duration) error {
+	if len(values) == 0 {
+		return nil
+	}
+	
+	client := GetRedis()
+	if client == nil {
+		return fmt.Errorf("redis client not available")
+	}
+	
+	// Convert int64 values to interface{} for Redis
+	data := make(map[string]interface{}, len(values))
+	for k, v := range values {
+		data[k] = v
+	}
+	
+	// Use pipeline for atomic operation
+	pipe := client.Pipeline()
+	pipe.HSet(ctx, key, data)
+	pipe.Expire(ctx, key, ttl)
+	
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("redis pipeline failed: %w", err)
+	}
+	return nil
+}
+
+// Del deletes a key
+func Del(ctx context.Context, key string) error {
+	client := GetRedis()
+	if client == nil {
+		return fmt.Errorf("redis client not available")
+	}
+	
+	err := client.Del(ctx, key).Err()
+	if err != nil {
+		return fmt.Errorf("redis Del failed: %w", err)
+	}
+	return nil
+}
