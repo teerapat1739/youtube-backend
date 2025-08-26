@@ -60,3 +60,8 @@ CREATE TABLE IF NOT EXISTS user_terms_acceptance (
 -- Add index for user_terms_acceptance
 CREATE INDEX IF NOT EXISTS idx_user_terms_acceptance_user ON user_terms_acceptance(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_terms_acceptance_accepted_at ON user_terms_acceptance(accepted_at);
+
+-- Log completion
+INSERT INTO schema_migrations (version, applied_at) 
+VALUES ('003_fix_user_schema', NOW()) 
+ON CONFLICT (version) DO NOTHING;
