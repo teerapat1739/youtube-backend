@@ -43,11 +43,10 @@ func (h *EnhancedOAuthHandler) HandleLogin(w http.ResponseWriter, r *http.Reques
 	// In production, you'd want to store this securely
 
 	// Configure OAuth to request offline access and force consent to guarantee refresh token
-	// Use "consent" to ensure user sees consent screen and "select_account" for account selection
+	// Use "consent" to ensure user sees consent screen and refresh token is issued
 	url := h.oauthConfig.AuthCodeURL(state, 
 		oauth2.AccessTypeOffline,
-		oauth2.SetAuthURLParam("prompt", "consent"),
-		oauth2.SetAuthURLParam("approval_prompt", "force"))
+		oauth2.SetAuthURLParam("prompt", "consent"))
 	log.Printf("🔄 Redirecting to Google OAuth: %s", url)
 
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
