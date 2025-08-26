@@ -386,6 +386,10 @@ func main() {
 	router.HandleFunc("/api/terms", authHandlers.HandleGetTerms).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/user/accept-terms", authHandlers.HandleAcceptTerms).Methods("POST", "OPTIONS")
 	
+	// Activity rules routes
+	router.HandleFunc("/api/activity/rules", authHandlers.HandleGetActivityRules).Methods("GET", "OPTIONS")
+	router.HandleFunc("/api/user/accept-activity-rules", authHandlers.HandleAcceptActivityRules).Methods("POST", "OPTIONS")
+	
 	// Token status and re-authorization routes
 	router.HandleFunc("/api/user/token-status", api.HandleTokenStatus).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/user/force-reauth", api.HandleForceReauth).Methods("GET", "OPTIONS")

@@ -214,3 +214,21 @@ type HealthCheckResponse struct {
 	Version   string            `json:"version"`
 	Services  map[string]string `json:"services"`
 }
+
+// ActivityRules represents activity rules with structured content
+type ActivityRules struct {
+	Version     string                 `json:"version"`
+	Title       string                 `json:"title"`
+	Description string                 `json:"description"`
+	Content     map[string]interface{} `json:"content"`
+}
+
+// ActivityRulesAcceptance represents a user's acceptance of activity rules
+type ActivityRulesAcceptance struct {
+	ID           string    `json:"id" db:"id"`
+	UserID       string    `json:"user_id" db:"user_id"`
+	RulesVersion string    `json:"rules_version" db:"rules_version"`
+	AcceptedAt   time.Time `json:"accepted_at" db:"accepted_at"`
+	IPAddress    *string   `json:"ip_address,omitempty" db:"ip_address"`
+	UserAgent    *string   `json:"user_agent,omitempty" db:"user_agent"`
+}

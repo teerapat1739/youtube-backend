@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -599,4 +600,90 @@ func (r *UserRepository) GetActiveTermsVersions(ctx context.Context) (termsVersi
 	}
 
 	return termsVersion, pdpaVersion, nil
+}
+
+// GetActiveActivityRules retrieves the active activity rules content
+func (r *UserRepository) GetActiveActivityRules(ctx context.Context) (*models.ActivityRules, error) {
+	query := `
+		SELECT version, title, description, rules_content
+		FROM activity_rules_versions 
+		WHERE active = TRUE 
+		ORDER BY created_at DESC 
+		LIMIT 1
+	`
+
+	var rules models.ActivityRules
+	var rulesContentJSON string
+	
+	err := database.GetDB().QueryRow(ctx, query).Scan(
+		&rules.Version,
+		&rules.Title,
+		&rules.Description,
+		&rulesContentJSON,
+	)
+	
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("no active activity rules found")
+		}
+		return nil, fmt.Errorf("failed to get activity rules: %w", err)
+	}
+
+	// Parse the JSON content
+	err = json.Unmarshal([]byte(rulesContentJSON), &rules.Content)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse activity rules content: %w", err)
+	}
+
+	return &rules, nil
+}
+
+// AcceptActivityRules records a user's acceptance of activity rules
+func (r *UserRepository) AcceptActivityRules(ctx context.Context, userID, version, ipAddress, userAgent string) error {
+	// Start a transaction
+	tx, err := database.GetDB().Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Update user's activity rules acceptance status
+	updateQuery := `
+		UPDATE users 
+		SET activity_rules_accepted = TRUE,
+			activity_rules_accepted_at = NOW(),
+			activity_rules_version = $2,
+			updated_at = NOW()
+		WHERE id = $1
+	`
+	
+	_, err = tx.Exec(ctx, updateQuery, userID, version)
+	if err != nil {
+		return fmt.Errorf("failed to update user activity rules acceptance: %w", err)
+	}
+
+	// Insert audit record
+	auditQuery := `
+		INSERT INTO user_activity_rules_acceptance 
+		(user_id, rules_version, accepted_at, ip_address, user_agent)
+		VALUES ($1, $2, NOW(), $3, $4)
+		ON CONFLICT (user_id, rules_version) 
+		DO UPDATE SET 
+			accepted_at = NOW(),
+			ip_address = EXCLUDED.ip_address,
+			user_agent = EXCLUDED.user_agent
+	`
+	
+	_, err = tx.Exec(ctx, auditQuery, userID, version, ipAddress, userAgent)
+	if err != nil {
+		return fmt.Errorf("failed to create activity rules audit record: %w", err)
+	}
+
+	// Commit transaction
+	err = tx.Commit(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
 }

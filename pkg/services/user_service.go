@@ -621,3 +621,23 @@ func (s *UserService) IsOAuthTokenExpired(ctx context.Context, userID string) (b
 	// Token is expired if expiry time is before now (with 5 minute buffer)
 	return user.GoogleTokenExpiry.Before(time.Now().Add(5*time.Minute)), nil
 }
+
+// AcceptActivityRules handles activity rules acceptance for a user
+func (s *UserService) AcceptActivityRules(ctx context.Context, userID, ipAddress, userAgent string) error {
+	log.Printf("🏆 Processing activity rules acceptance - UserID: %s", userID)
+
+	// Get current active activity rules version
+	currentRules, err := s.userRepo.GetActiveActivityRules(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get current activity rules: %w", err)
+	}
+
+	// Accept the activity rules
+	err = s.userRepo.AcceptActivityRules(ctx, userID, currentRules.Version, ipAddress, userAgent)
+	if err != nil {
+		return fmt.Errorf("failed to accept activity rules: %w", err)
+	}
+
+	log.Printf("✅ Activity rules accepted successfully - UserID: %s, Version: %s", userID, currentRules.Version)
+	return nil
+}

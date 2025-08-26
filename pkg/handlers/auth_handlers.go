@@ -334,6 +334,66 @@ func (h *AuthHandlers) getClientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
+// HandleGetActivityRules handles getting current activity rules content
+func (h *AuthHandlers) HandleGetActivityRules(w http.ResponseWriter, r *http.Request) {
+	log.Println("🏆 Handling get activity rules request")
+
+	userRepo := repository.NewUserRepository()
+	activityRules, err := userRepo.GetActiveActivityRules(r.Context())
+	if err != nil {
+		log.Printf("❌ Failed to get activity rules: %v", err)
+		http.Error(w, "Failed to get activity rules", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"success": true,
+		"data":    activityRules,
+	}
+
+	h.writeJSONResponse(w, response)
+}
+
+// HandleAcceptActivityRules handles activity rules acceptance
+func (h *AuthHandlers) HandleAcceptActivityRules(w http.ResponseWriter, r *http.Request) {
+	log.Println("🏆 Handling accept activity rules request")
+
+	// Extract user from JWT token
+	user, err := h.extractUserFromToken(r)
+	if err != nil {
+		log.Printf("❌ Failed to extract user from token: %v", err)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get client IP and User-Agent for audit
+	ipAddress := h.getClientIP(r)
+	userAgent := r.Header.Get("User-Agent")
+
+	// Accept activity rules
+	err = h.userService.AcceptActivityRules(
+		r.Context(),
+		user.ID,
+		ipAddress,
+		userAgent,
+	)
+
+	if err != nil {
+		log.Printf("❌ Failed to accept activity rules: %v", err)
+		http.Error(w, "Failed to accept activity rules", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("✅ Activity rules accepted successfully - UserID: %s", user.ID)
+
+	response := map[string]interface{}{
+		"success": true,
+		"message": "Activity rules accepted successfully",
+	}
+
+	h.writeJSONResponse(w, response)
+}
+
 // writeJSONResponse writes a JSON response
 func (h *AuthHandlers) writeJSONResponse(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
