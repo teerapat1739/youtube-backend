@@ -16,7 +16,6 @@ import (
 	"github.com/gamemini/youtube/pkg/auth/google"
 	"github.com/gamemini/youtube/pkg/database"
 	"github.com/gamemini/youtube/pkg/handlers"
-	"github.com/gamemini/youtube/pkg/middleware"
 	"github.com/gamemini/youtube/pkg/models"
 	"github.com/gamemini/youtube/pkg/services"
 	"github.com/golang-jwt/jwt/v5"
@@ -181,9 +180,6 @@ func main() {
 	fmt.Println("🔐 Initializing enhanced authentication handlers...")
 	authHandlers := handlers.NewAuthHandlers()
 	
-	// Initialize admin middleware
-	fmt.Println("🛡️ Initializing admin middleware...")
-	adminMiddleware := middleware.NewAdminMiddleware()
 
 	router := mux.NewRouter()
 
@@ -207,6 +203,9 @@ func main() {
 
 	// Ananped celebration routes
 	router.HandleFunc("/api/ananped/subscription-check", api.HandleAnanpedSubscriptionCheck).Methods("GET", "OPTIONS")
+
+	// Testing route for subscription check (no authentication required)
+	router.HandleFunc("/api/test/subscription/{user_id}/{channel_id}", api.HandleTestSubscription).Methods("GET", "OPTIONS")
 
 	// Enhanced YouTube API routes
 	router.HandleFunc("/api/user-info", authHandlers.HandleUserInfo).Methods("GET", "OPTIONS")
@@ -391,13 +390,6 @@ func main() {
 	router.HandleFunc("/api/user/token-status", api.HandleTokenStatus).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/user/force-reauth", api.HandleForceReauth).Methods("GET", "OPTIONS")
 	
-	// Admin authentication (no middleware required)
-	router.HandleFunc("/api/admin/login", api.HandleAdminLogin).Methods("POST", "OPTIONS")
-	
-	// Admin routes with middleware protection
-	adminRouter := router.PathPrefix("/api/admin").Subrouter()
-	adminRouter.Use(adminMiddleware.RequireAdmin)
-	adminRouter.HandleFunc("/subscription-check", api.HandleAdminSubscriptionCheck).Methods("POST", "OPTIONS")
 
 	// Legacy routes (plural) for backward compatibility
 	router.HandleFunc("/api/users/profile", authHandlers.HandleGetUserProfile).Methods("GET", "OPTIONS")

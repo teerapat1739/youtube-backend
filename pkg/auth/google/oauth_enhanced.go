@@ -43,11 +43,11 @@ func (h *EnhancedOAuthHandler) HandleLogin(w http.ResponseWriter, r *http.Reques
 	// In production, you'd want to store this securely
 
 	// Configure OAuth to request offline access and force consent to guarantee refresh token
-	// Use "select_account consent" to ensure user sees consent screen even if previously authorized
+	// Use "consent" to ensure user sees consent screen and "select_account" for account selection
 	url := h.oauthConfig.AuthCodeURL(state, 
 		oauth2.AccessTypeOffline,
-		oauth2.SetAuthURLParam("prompt", "select_account consent"),
-		oauth2.SetAuthURLParam("access_type", "offline"))
+		oauth2.SetAuthURLParam("prompt", "consent"),
+		oauth2.SetAuthURLParam("approval_prompt", "force"))
 	log.Printf("🔄 Redirecting to Google OAuth: %s", url)
 
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
@@ -102,8 +102,10 @@ func (h *EnhancedOAuthHandler) HandleCallback(w http.ResponseWriter, r *http.Req
 		log.Printf("   - Find your app and click 'Remove access'")
 		log.Printf("   - Re-authorize to get refresh token")
 		
-		// Store empty refresh token but continue (for partial functionality)
-		log.Printf("⚠️ [DEGRADED] Continuing with access token only - YouTube API calls may fail when token expires")
+		// Redirect with error instead of continuing with degraded functionality
+		log.Printf("❌ [REDIRECT] Redirecting to frontend with refresh token error")
+		http.Redirect(w, r, frontendURL+"/?error=no_refresh_token", http.StatusTemporaryRedirect)
+		return
 	} else {
 		log.Printf("✅ [SUCCESS] Refresh token received successfully from Google OAuth")
 		log.Printf("🔑 [TOKEN] Refresh Token Length: %d characters", len(token.RefreshToken))

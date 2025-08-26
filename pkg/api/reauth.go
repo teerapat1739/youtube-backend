@@ -131,24 +131,3 @@ func analyzeTokenStatus(user *models.User) *TokenStatusResponse {
 	return response
 }
 
-// HandleBulkTokenAnalysis provides admin endpoint to analyze all users' token status
-func HandleBulkTokenAnalysis(w http.ResponseWriter, r *http.Request) {
-	log.Printf("📊 [BULK-TOKEN-ANALYSIS] Starting bulk token analysis")
-	
-	// This would need to be implemented in the repository
-	// For now, return a placeholder response
-	response := map[string]interface{}{
-		"success": true,
-		"message": "Bulk token analysis completed",
-		"summary": map[string]interface{}{
-			"total_users": "Query needed",
-			"users_with_refresh_token": "Query needed", 
-			"users_without_refresh_token": "Query needed",
-			"users_with_expired_tokens": "Query needed",
-		},
-		"recommendation": "Run the SQL queries in debug_refresh_tokens.sql to get detailed statistics",
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-}
