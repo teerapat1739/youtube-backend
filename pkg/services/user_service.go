@@ -4,8 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -498,21 +503,107 @@ func (s *UserService) RefreshUserOAuthToken(ctx context.Context, userID string) 
 func (s *UserService) refreshTokenWithGoogle(ctx context.Context, refreshToken string) (*models.OAuthTokenData, error) {
 	log.Printf("🔄 Calling Google token refresh endpoint")
 	
-	// For now, implement a mock refresh that extends the token
-	// In production, this would call Google's actual refresh endpoint
-	// POST https://oauth2.googleapis.com/token with refresh_token
+	// Get OAuth configuration
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
 	
-	newExpiry := time.Now().Add(time.Hour) // Google access tokens typically last 1 hour
-	
-	// Mock refreshed token data - in production you'd get this from Google's response
-	refreshedData := &models.OAuthTokenData{
-		AccessToken:  "refreshed_" + refreshToken[:20] + "_" + fmt.Sprintf("%d", time.Now().Unix()),
-		RefreshToken: refreshToken, // Refresh token usually stays the same
-		Expiry:       newExpiry,
-		TokenType:    "Bearer",
+	if clientID == "" || clientSecret == "" {
+		return nil, fmt.Errorf("missing Google OAuth credentials")
 	}
 	
-	log.Printf("✅ Token refreshed with Google (mock implementation)")
+	// Prepare token refresh request
+	data := url.Values{}
+	data.Set("client_id", clientID)
+	data.Set("client_secret", clientSecret)
+	data.Set("refresh_token", refreshToken)
+	data.Set("grant_type", "refresh_token")
+	
+	// Make HTTP request to Google's token endpoint
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://oauth2.googleapis.com/token", strings.NewReader(data.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create refresh request: %w", err)
+	}
+	
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	
+	log.Printf("🌐 Making token refresh request to Google")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to refresh token with Google: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read refresh response: %w", err)
+	}
+	
+	// Check for HTTP errors
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("❌ Google token refresh failed with status %d: %s", resp.StatusCode, string(body))
+		
+		// Parse error response for better error messages
+		var errorResp struct {
+			Error            string `json:"error"`
+			ErrorDescription string `json:"error_description"`
+		}
+		
+		if json.Unmarshal(body, &errorResp) == nil && errorResp.Error != "" {
+			switch errorResp.Error {
+			case "invalid_grant":
+				return nil, fmt.Errorf("refresh token is invalid or expired, user needs to re-authorize")
+			case "invalid_client":
+				return nil, fmt.Errorf("invalid OAuth client credentials")
+			default:
+				return nil, fmt.Errorf("token refresh failed: %s - %s", errorResp.Error, errorResp.ErrorDescription)
+			}
+		}
+		
+		return nil, fmt.Errorf("token refresh failed with status %d", resp.StatusCode)
+	}
+	
+	// Parse successful response
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token,omitempty"` // Google may rotate refresh token
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int    `json:"expires_in"`
+		Scope        string `json:"scope,omitempty"`
+	}
+	
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return nil, fmt.Errorf("failed to parse token response: %w", err)
+	}
+	
+	// Validate required fields
+	if tokenResp.AccessToken == "" {
+		return nil, fmt.Errorf("no access token in refresh response")
+	}
+	
+	// Calculate expiry time
+	newExpiry := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	
+	// Use new refresh token if provided, otherwise keep the original
+	newRefreshToken := refreshToken
+	if tokenResp.RefreshToken != "" {
+		newRefreshToken = tokenResp.RefreshToken
+		log.Printf("🔄 Google provided new refresh token")
+	}
+	
+	// Create refreshed token data
+	refreshedData := &models.OAuthTokenData{
+		AccessToken:  tokenResp.AccessToken,
+		RefreshToken: newRefreshToken,
+		Expiry:       newExpiry,
+		TokenType:    tokenResp.TokenType,
+	}
+	
+	log.Printf("✅ Token refreshed successfully with Google - Expires: %s", newExpiry.Format(time.RFC3339))
 	return refreshedData, nil
 }
 
