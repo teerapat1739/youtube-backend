@@ -1,4 +1,4 @@
--- Migration 004: Fix Profile Completion Logic
+-- Migration 009: Fix Profile Completion Logic
 -- This migration fixes the issue where profile_completed flag incorrectly requires 
 -- terms_accepted AND pdpa_accepted to be true, when it should only depend on 
 -- actual profile data completeness.
@@ -57,3 +57,8 @@ BEGIN
     RAISE NOTICE 'Updated profile_completed flag for % users', affected_count;
 END
 $$;
+
+-- Log completion
+INSERT INTO schema_migrations (version, applied_at) 
+VALUES ('009_fix_profile_completion_logic', NOW()) 
+ON CONFLICT (version) DO NOTHING;

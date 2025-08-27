@@ -11,7 +11,6 @@ type User struct {
 	Email                  string     `json:"email" db:"email"`
 	FirstName              *string    `json:"first_name" db:"first_name"`
 	LastName               *string    `json:"last_name" db:"last_name"`
-	NationalID             *string    `json:"national_id" db:"national_id"`
 	Phone                  *string    `json:"phone" db:"phone"`
 	TermsAccepted          bool       `json:"terms_accepted" db:"terms_accepted"`
 	TermsVersion           *string    `json:"terms_version" db:"terms_version"`
@@ -97,7 +96,6 @@ type CreateUserRequest struct {
 	Email       string `json:"email" validate:"required,email"`
 	FirstName   string `json:"first_name" validate:"required"`
 	LastName    string `json:"last_name" validate:"required"`
-	NationalID  string `json:"national_id" validate:"required"`
 	Phone       string `json:"phone" validate:"required"`
 	AcceptTerms bool   `json:"accept_terms" validate:"required"`
 	AcceptPDPA  bool   `json:"accept_pdpa" validate:"required"`
@@ -107,7 +105,6 @@ type CreateUserRequest struct {
 type UpdateUserProfileRequest struct {
 	FirstName   string `json:"first_name" validate:"required,min=2,max=50"`
 	LastName    string `json:"last_name" validate:"required,min=2,max=50"`
-	NationalID  string `json:"national_id" validate:"required,len=13"`
 	Phone       string `json:"phone" validate:"required,len=10"`
 	AcceptTerms bool   `json:"accept_terms" validate:"required"`
 	AcceptPDPA  bool   `json:"accept_pdpa" validate:"required"`
@@ -115,10 +112,9 @@ type UpdateUserProfileRequest struct {
 
 // UserProfileValidationRequest represents the request to validate profile data
 type UserProfileValidationRequest struct {
-	FirstName  string `json:"first_name" validate:"required,min=2,max=50"`
-	LastName   string `json:"last_name" validate:"required,min=2,max=50"`
-	NationalID string `json:"national_id" validate:"required,len=13"`
-	Phone      string `json:"phone" validate:"required,len=10"`
+	FirstName string `json:"first_name" validate:"required,min=2,max=50"`
+	LastName  string `json:"last_name" validate:"required,min=2,max=50"`
+	Phone     string `json:"phone" validate:"required,len=10"`
 }
 
 // AcceptTermsRequest represents the request to accept terms and PDPA
@@ -213,4 +209,22 @@ type HealthCheckResponse struct {
 	Timestamp time.Time         `json:"timestamp"`
 	Version   string            `json:"version"`
 	Services  map[string]string `json:"services"`
+}
+
+// ActivityRules represents activity rules with structured content
+type ActivityRules struct {
+	Version     string                 `json:"version"`
+	Title       string                 `json:"title"`
+	Description string                 `json:"description"`
+	Content     map[string]interface{} `json:"content"`
+}
+
+// ActivityRulesAcceptance represents a user's acceptance of activity rules
+type ActivityRulesAcceptance struct {
+	ID           string    `json:"id" db:"id"`
+	UserID       string    `json:"user_id" db:"user_id"`
+	RulesVersion string    `json:"rules_version" db:"rules_version"`
+	AcceptedAt   time.Time `json:"accepted_at" db:"accepted_at"`
+	IPAddress    *string   `json:"ip_address,omitempty" db:"ip_address"`
+	UserAgent    *string   `json:"user_agent,omitempty" db:"user_agent"`
 }

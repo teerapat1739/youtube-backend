@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -22,8 +23,8 @@ func NewUserRepository() *UserRepository {
 // CreateUser creates a new user
 func (r *UserRepository) CreateUser(ctx context.Context, user *models.User) error {
 	query := `
-		INSERT INTO users (google_id, email, first_name, last_name, national_id, phone, terms_accepted, pdpa_accepted, profile_completed)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO users (google_id, email, first_name, last_name, phone, terms_accepted, pdpa_accepted, profile_completed)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, updated_at
 	`
 
@@ -32,7 +33,6 @@ func (r *UserRepository) CreateUser(ctx context.Context, user *models.User) erro
 		user.Email,
 		user.FirstName,
 		user.LastName,
-		user.NationalID,
 		user.Phone,
 		user.TermsAccepted,
 		user.PDPAAccepted,
@@ -49,7 +49,7 @@ func (r *UserRepository) CreateUser(ctx context.Context, user *models.User) erro
 // GetUserByGoogleID retrieves a user by Google ID
 func (r *UserRepository) GetUserByGoogleID(ctx context.Context, googleID string) (*models.User, error) {
 	query := `
-		SELECT id, google_id, email, first_name, last_name, national_id, phone,
+		SELECT id, google_id, email, first_name, last_name, phone,
 		       youtube_subscribed, subscription_verified_at, created_at, updated_at
 		FROM users
 		WHERE google_id = $1
@@ -62,7 +62,6 @@ func (r *UserRepository) GetUserByGoogleID(ctx context.Context, googleID string)
 		&user.Email,
 		&user.FirstName,
 		&user.LastName,
-		&user.NationalID,
 		&user.Phone,
 		&user.YouTubeSubscribed,
 		&user.SubscriptionVerifiedAt,
@@ -83,7 +82,7 @@ func (r *UserRepository) GetUserByGoogleID(ctx context.Context, googleID string)
 // GetUserByID retrieves a user by ID
 func (r *UserRepository) GetUserByID(ctx context.Context, userID string) (*models.User, error) {
 	query := `
-		SELECT id, google_id, email, first_name, last_name, national_id, phone,
+		SELECT id, google_id, email, first_name, last_name, phone,
 		       terms_accepted, terms_version, pdpa_accepted, pdpa_version, profile_completed,
 		       youtube_subscribed, subscription_verified_at, 
 		       google_access_token, google_refresh_token, google_token_expiry, youtube_channel_id,
@@ -99,7 +98,6 @@ func (r *UserRepository) GetUserByID(ctx context.Context, userID string) (*model
 		&user.Email,
 		&user.FirstName,
 		&user.LastName,
-		&user.NationalID,
 		&user.Phone,
 		&user.TermsAccepted,
 		&user.TermsVersion,
@@ -126,38 +124,6 @@ func (r *UserRepository) GetUserByID(ctx context.Context, userID string) (*model
 	return &user, nil
 }
 
-// GetUserByNationalID retrieves a user by National ID
-func (r *UserRepository) GetUserByNationalID(ctx context.Context, nationalID string) (*models.User, error) {
-	query := `
-		SELECT id, google_id, email, first_name, last_name, national_id, phone,
-		       youtube_subscribed, subscription_verified_at, created_at, updated_at
-		FROM users WHERE national_id = $1
-	`
-
-	var user models.User
-	err := database.GetDB().QueryRow(ctx, query, nationalID).Scan(
-		&user.ID,
-		&user.GoogleID,
-		&user.Email,
-		&user.FirstName,
-		&user.LastName,
-		&user.NationalID,
-		&user.Phone,
-		&user.YouTubeSubscribed,
-		&user.SubscriptionVerifiedAt,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
-
-	if err != nil {
-		if err.Error() == "no rows in result set" {
-			return nil, nil // User not found
-		}
-		return nil, fmt.Errorf("failed to get user by national ID: %w", err)
-	}
-
-	return &user, nil
-}
 
 // UpdateUser updates a user
 func (r *UserRepository) UpdateUser(ctx context.Context, userID string, updates *models.UpdateUserProfileRequest) error {
@@ -176,12 +142,6 @@ func (r *UserRepository) UpdateUser(ctx context.Context, userID string, updates 
 		argCount++
 		setParts = append(setParts, fmt.Sprintf("last_name = $%d", argCount))
 		args = append(args, updates.LastName)
-	}
-
-	if updates.NationalID != "" {
-		argCount++
-		setParts = append(setParts, fmt.Sprintf("national_id = $%d", argCount))
-		args = append(args, updates.NationalID)
 	}
 
 	if updates.Phone != "" {
@@ -283,16 +243,17 @@ func (r *UserRepository) DeleteUserSession(ctx context.Context, sessionToken str
 	return nil
 }
 
-// CleanExpiredSessions cleans up expired user sessions
-func (r *UserRepository) CleanExpiredSessions(ctx context.Context) error {
+// CleanExpiredSessions cleans up expired user sessions and returns count of deleted sessions
+func (r *UserRepository) CleanExpiredSessions(ctx context.Context) (int64, error) {
 	query := `DELETE FROM user_sessions WHERE expires_at <= NOW()`
 
-	_, err := database.GetDB().Exec(ctx, query)
+	result, err := database.GetDB().Exec(ctx, query)
 	if err != nil {
-		return fmt.Errorf("failed to clean expired sessions: %v", err)
+		return 0, fmt.Errorf("failed to clean expired sessions: %v", err)
 	}
 
-	return nil
+	deletedCount := result.RowsAffected()
+	return deletedCount, nil
 }
 
 // UpsertUserFromOAuth creates or updates a user from OAuth data with proper race condition handling
@@ -307,7 +268,7 @@ func (r *UserRepository) UpsertUserFromOAuth(ctx context.Context, googleID, emai
 		DO UPDATE SET 
 			email = EXCLUDED.email,
 			updated_at = NOW()
-		RETURNING id, google_id, email, first_name, last_name, national_id, phone,
+		RETURNING id, google_id, email, first_name, last_name, phone,
 				terms_accepted, terms_version, pdpa_accepted, pdpa_version, profile_completed,
 				youtube_subscribed, subscription_verified_at, created_at, updated_at,
 				(xmax = 0) as is_new_user
@@ -322,7 +283,6 @@ func (r *UserRepository) UpsertUserFromOAuth(ctx context.Context, googleID, emai
 		&user.Email,
 		&user.FirstName,
 		&user.LastName,
-		&user.NationalID,
 		&user.Phone,
 		&user.TermsAccepted,
 		&user.TermsVersion,
@@ -360,7 +320,7 @@ func (r *UserRepository) UpsertUserFromOAuthWithTokens(ctx context.Context, goog
 			google_refresh_token = EXCLUDED.google_refresh_token,
 			google_token_expiry = EXCLUDED.google_token_expiry,
 			updated_at = NOW()
-		RETURNING id, google_id, email, first_name, last_name, national_id, phone,
+		RETURNING id, google_id, email, first_name, last_name, phone,
 				terms_accepted, terms_version, pdpa_accepted, pdpa_version, profile_completed,
 				youtube_subscribed, subscription_verified_at,
 				google_access_token, google_refresh_token, google_token_expiry, youtube_channel_id,
@@ -377,7 +337,6 @@ func (r *UserRepository) UpsertUserFromOAuthWithTokens(ctx context.Context, goog
 		&user.Email,
 		&user.FirstName,
 		&user.LastName,
-		&user.NationalID,
 		&user.Phone,
 		&user.TermsAccepted,
 		&user.TermsVersion,
@@ -453,8 +412,7 @@ func (r *UserRepository) UpdateUserProfileAtomic(ctx context.Context, userID str
 		UPDATE users SET 
 			first_name = $2,
 			last_name = $3,
-			national_id = $4,
-			phone = $5,
+			phone = $4,
 			profile_completed = TRUE,
 			updated_at = NOW()
 		WHERE id = $1
@@ -464,7 +422,6 @@ func (r *UserRepository) UpdateUserProfileAtomic(ctx context.Context, userID str
 		userID,
 		updates.FirstName,
 		updates.LastName,
-		updates.NationalID,
 		updates.Phone,
 	)
 
@@ -485,6 +442,63 @@ func (r *UserRepository) UpdateUserProfileAtomic(ctx context.Context, userID str
 	}
 
 	log.Printf("✅ User profile updated atomically - UserID: %s", userID)
+	return nil
+}
+
+// UpdateUserPersonalInfoOnly updates only personal information fields without changing other user data
+func (r *UserRepository) UpdateUserPersonalInfoOnly(ctx context.Context, userID, firstName, lastName, phone string) error {
+	log.Printf("📝 Updating personal info only - UserID: %s", userID)
+	
+	// Begin transaction for atomic update
+	tx, err := database.GetDB().Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	
+	// Update personal information fields and set profile_completed based on required fields
+	// Profile is considered complete when first_name, last_name, and phone are provided
+	// Use separate parameters for the profile_completed calculation to avoid type conflicts
+	query := `
+		UPDATE users SET 
+			first_name = $2,
+			last_name = $3,
+			phone = $4,
+			profile_completed = (
+				COALESCE($5, '') != '' AND 
+				COALESCE($6, '') != '' AND 
+				COALESCE($7, '') != ''
+			),
+			updated_at = NOW()
+		WHERE id = $1
+	`
+	
+	result, err := tx.Exec(ctx, query,
+		userID,
+		firstName,
+		lastName,
+		phone,
+		firstName, // $5 - separate parameter for profile_completed check
+		lastName,  // $6 - separate parameter for profile_completed check
+		phone,     // $7 - separate parameter for profile_completed check
+	)
+	if err != nil {
+		log.Printf("❌ Failed to update personal info: %v", err)
+		return fmt.Errorf("failed to update personal info: %w", err)
+	}
+	
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("user not found")
+	}
+	
+	// Commit transaction
+	if err := tx.Commit(ctx); err != nil {
+		log.Printf("❌ Failed to commit transaction: %v", err)
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+	
+	log.Printf("✅ Personal info updated successfully - UserID: %s", userID)
 	return nil
 }
 
@@ -598,4 +612,90 @@ func (r *UserRepository) GetActiveTermsVersions(ctx context.Context) (termsVersi
 	}
 
 	return termsVersion, pdpaVersion, nil
+}
+
+// GetActiveActivityRules retrieves the active activity rules content
+func (r *UserRepository) GetActiveActivityRules(ctx context.Context) (*models.ActivityRules, error) {
+	query := `
+		SELECT version, title, description, rules_content
+		FROM activity_rules_versions 
+		WHERE active = TRUE 
+		ORDER BY created_at DESC 
+		LIMIT 1
+	`
+
+	var rules models.ActivityRules
+	var rulesContentJSON string
+	
+	err := database.GetDB().QueryRow(ctx, query).Scan(
+		&rules.Version,
+		&rules.Title,
+		&rules.Description,
+		&rulesContentJSON,
+	)
+	
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, fmt.Errorf("no active activity rules found")
+		}
+		return nil, fmt.Errorf("failed to get activity rules: %w", err)
+	}
+
+	// Parse the JSON content
+	err = json.Unmarshal([]byte(rulesContentJSON), &rules.Content)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse activity rules content: %w", err)
+	}
+
+	return &rules, nil
+}
+
+// AcceptActivityRules records a user's acceptance of activity rules
+func (r *UserRepository) AcceptActivityRules(ctx context.Context, userID, version, ipAddress, userAgent string) error {
+	// Start a transaction
+	tx, err := database.GetDB().Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to start transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Update user's activity rules acceptance status
+	updateQuery := `
+		UPDATE users 
+		SET activity_rules_accepted = TRUE,
+			activity_rules_accepted_at = NOW(),
+			activity_rules_version = $2,
+			updated_at = NOW()
+		WHERE id = $1
+	`
+	
+	_, err = tx.Exec(ctx, updateQuery, userID, version)
+	if err != nil {
+		return fmt.Errorf("failed to update user activity rules acceptance: %w", err)
+	}
+
+	// Insert audit record
+	auditQuery := `
+		INSERT INTO user_activity_rules_acceptance 
+		(user_id, rules_version, accepted_at, ip_address, user_agent)
+		VALUES ($1, $2, NOW(), $3, $4)
+		ON CONFLICT (user_id, rules_version) 
+		DO UPDATE SET 
+			accepted_at = NOW(),
+			ip_address = EXCLUDED.ip_address,
+			user_agent = EXCLUDED.user_agent
+	`
+	
+	_, err = tx.Exec(ctx, auditQuery, userID, version, ipAddress, userAgent)
+	if err != nil {
+		return fmt.Errorf("failed to create activity rules audit record: %w", err)
+	}
+
+	// Commit transaction
+	err = tx.Commit(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
 }

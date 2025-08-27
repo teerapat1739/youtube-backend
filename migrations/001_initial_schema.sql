@@ -152,3 +152,14 @@ GRANT USAGE ON SCHEMA public TO anon, authenticated;
 GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated;
 GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO anon, authenticated;
+
+-- Create schema_migrations table if it doesn't exist
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version VARCHAR(255) PRIMARY KEY,
+    applied_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Log completion
+INSERT INTO schema_migrations (version, applied_at) 
+VALUES ('001_initial_schema', NOW()) 
+ON CONFLICT (version) DO NOTHING;

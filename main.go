@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -47,27 +48,51 @@ func loadEnv() {
 	}
 }
 
+// getAllowedOrigins reads CORS allowed origins from environment variable
+// Returns an error if ALLOWED_ORIGINS is not set or empty to make configuration explicit
+func getAllowedOrigins() ([]string, error) {
+	// Try to get origins from environment variable
+	envOrigins := os.Getenv("ALLOWED_ORIGINS")
+	if envOrigins == "" {
+		return nil, fmt.Errorf("ALLOWED_ORIGINS environment variable is required but not set")
+	}
+
+	// Parse comma-separated origins from environment
+	origins := make([]string, 0)
+	for _, origin := range strings.Split(envOrigins, ",") {
+		// Trim whitespace and skip empty strings
+		trimmed := strings.TrimSpace(origin)
+		if trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+
+	// If no valid origins found after parsing, return error
+	if len(origins) == 0 {
+		return nil, fmt.Errorf("ALLOWED_ORIGINS contains no valid origins after parsing")
+	}
+
+	log.Printf("🌐 [CORS] Using origins from ALLOWED_ORIGINS environment variable: %v", origins)
+	return origins, nil
+}
+
+// Global variable to store validated allowed origins
+var globalAllowedOrigins []string
+
 // CORS middleware
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		
+
 		// Log CORS request for debugging
 		log.Printf("🌐 [CORS] Request from origin: %s, Method: %s, Path: %s", origin, r.Method, r.URL.Path)
 
 		// Get frontend URL from environment variable
 		frontendURL := os.Getenv("FRONTEND_URL")
-		
-		// Allow specific origins
-		allowedOrigins := []string{
-			"http://localhost:3000",
-			"http://localhost:3001",
-			"http://localhost:3002",
-			"http://localhost:5173",        // Vite default
-			"https://poc-461500.web.app",   // Firebase hosting
-			"https://ananped.netlify.app",  // Production frontend
-		}
-		
+
+		// Use pre-validated allowed origins
+		allowedOrigins := globalAllowedOrigins
+
 		// Add FRONTEND_URL to allowed origins if it's set and not already included
 		if frontendURL != "" {
 			found := false
@@ -78,11 +103,13 @@ func corsMiddleware(next http.Handler) http.Handler {
 				}
 			}
 			if !found {
+				// Create a copy to avoid modifying global slice
+				allowedOrigins = append([]string{}, allowedOrigins...)
 				allowedOrigins = append(allowedOrigins, frontendURL)
 				log.Printf("🌐 [CORS] Added FRONTEND_URL to allowed origins: %s", frontendURL)
 			}
 		}
-		
+
 		// Log allowed origins for debugging on first request (to avoid spam)
 		if r.URL.Path == "/health" && r.Method == "GET" {
 			log.Printf("🌐 [CORS] Current allowed origins: %v", allowedOrigins)
@@ -114,7 +141,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Origin, User-Agent, DNT, Cache-Control, X-Mx-ReqToken, Keep-Alive, X-Requested-With, If-Modified-Since, sec-ch-ua, sec-ch-ua-mobile, sec-ch-ua-platform, Referer")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Origin, User-Agent, DNT, Cache-Control, X-Mx-ReqToken, Keep-Alive, X-Requested-With, If-Modified-Since, sec-ch-ua, sec-ch-ua-mobile, sec-ch-ua-platform, Referer, Idempotency-Key")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
 		w.Header().Set("Access-Control-Max-Age", "86400")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Type")
@@ -133,6 +160,15 @@ func main() {
 	// Load environment variables from .env.local file
 	loadEnv()
 
+	// Validate required configuration early
+	fmt.Println("🔧 Validating configuration...")
+	var err error
+	globalAllowedOrigins, err = getAllowedOrigins()
+	if err != nil {
+		log.Fatalf("❌ [CONFIG] Failed to get allowed origins: %v", err)
+	}
+	fmt.Printf("✅ [CONFIG] ALLOWED_ORIGINS validated: %v\n", globalAllowedOrigins)
+
 	// Initialize database connection
 	fmt.Println("🔌 Initializing database connection...")
 	if err := database.InitDB(); err != nil {
@@ -143,12 +179,14 @@ func main() {
 	// Initialize enhanced authentication handlers
 	fmt.Println("🔐 Initializing enhanced authentication handlers...")
 	authHandlers := handlers.NewAuthHandlers()
+	
 
 	router := mux.NewRouter()
 
 	// Enhanced Auth routes with proper user creation/update
 	router.HandleFunc("/auth/google/login", authHandlers.HandleGoogleLogin).Methods("GET")
 	router.HandleFunc("/auth/google/callback", authHandlers.HandleGoogleCallback).Methods("GET")
+	router.HandleFunc("/auth/logout", authHandlers.HandleLogout).Methods("POST", "OPTIONS")
 	// BE Login route (using be package)
 	router.HandleFunc("/auth/be/login", func(w http.ResponseWriter, r *http.Request) {
 		be.Login(w, r)
@@ -165,6 +203,9 @@ func main() {
 
 	// Ananped celebration routes
 	router.HandleFunc("/api/ananped/subscription-check", api.HandleAnanpedSubscriptionCheck).Methods("GET", "OPTIONS")
+
+	// Testing route for subscription check (no authentication required)
+	router.HandleFunc("/api/test/subscription/{user_id}/{channel_id}", api.HandleTestSubscription).Methods("GET", "OPTIONS")
 
 	// Enhanced YouTube API routes
 	router.HandleFunc("/api/user-info", authHandlers.HandleUserInfo).Methods("GET", "OPTIONS")
@@ -191,11 +232,14 @@ func main() {
 		json.NewEncoder(w).Encode(subscriptions)
 	}).Methods("GET", "OPTIONS")
 
+	// Vote counts endpoint with caching
+	router.HandleFunc("/api/activities/{id}/counts", api.HandleGetVoteCounts).Methods("GET", "OPTIONS")
+
 	// New API routes for the voting system
 	// Voting system routes with hardcoded teams
 	router.HandleFunc("/api/activities/active", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("🎯 [API] GET /api/activities/active - Request from %s", r.RemoteAddr)
-		
+
 		// Extract user ID for personalized response
 		_, _, userID, err := extractUserFromToken(r)
 		if err != nil {
@@ -203,19 +247,19 @@ func main() {
 			// For now, use a default userID for anonymous users
 			userID = "anonymous-" + fmt.Sprintf("%d", time.Now().Unix())
 		}
-		
+
 		teamService := services.NewTeamService()
 		activityID := "active" // Use "active" as the default activity ID
-		
+
 		activity, err := teamService.GetActivityWithTeams(r.Context(), activityID, userID)
 		if err != nil {
 			log.Printf("❌ [API] Failed to get activity with teams: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to get activity: %v", err), http.StatusInternalServerError)
 			return
 		}
-		
+
 		log.Printf("✅ [API] Successfully retrieved activity with %d teams", len(activity.Teams))
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
@@ -227,14 +271,14 @@ func main() {
 		vars := mux.Vars(r)
 		activityID := vars["id"]
 		log.Printf("🏆 [API] GET /api/activities/%s/teams", activityID)
-		
+
 		// Extract user ID for personalized response
 		_, _, userID, err := extractUserFromToken(r)
 		if err != nil {
 			log.Printf("❌ [API] Failed to extract user from token: %v", err)
 			userID = "anonymous-" + fmt.Sprintf("%d", time.Now().Unix())
 		}
-		
+
 		teamService := services.NewTeamService()
 		teams, err := teamService.GetTeamsWithVotes(r.Context(), activityID)
 		if err != nil {
@@ -242,19 +286,19 @@ func main() {
 			http.Error(w, fmt.Sprintf("Failed to get teams: %v", err), http.StatusInternalServerError)
 			return
 		}
-		
+
 		// Get user vote status
 		userVote, err := teamService.GetUserVoteStatus(r.Context(), userID, activityID)
 		if err != nil {
 			log.Printf("❌ [API] Failed to get user vote status: %v", err)
 			userVote = &models.VotingStatus{HasVoted: false}
 		}
-		
+
 		log.Printf("✅ [API] Successfully retrieved %d teams", len(teams))
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":     true,
+			"success": true,
 			"data": map[string]interface{}{
 				"teams":       teams,
 				"activity_id": activityID,
@@ -267,23 +311,23 @@ func main() {
 		vars := mux.Vars(r)
 		activityID := vars["id"]
 		log.Printf("🗳️  [API] POST /api/activities/%s/vote", activityID)
-		
+
 		var voteRequest models.CreateVoteRequest
 		if err := json.NewDecoder(r.Body).Decode(&voteRequest); err != nil {
 			log.Printf("❌ [API] Invalid request body: %v", err)
 			http.Error(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
-		
+
 		_, _, userID, err := extractUserFromToken(r)
 		if err != nil {
 			log.Printf("❌ [API] Failed to extract user from token: %v", err)
 			http.Error(w, fmt.Sprintf("Authentication required: %v", err), http.StatusUnauthorized)
 			return
 		}
-		
+
 		log.Printf("🔐 [API] Vote request - UserID: %s, TeamID: %s", userID, voteRequest.TeamID)
-		
+
 		teamService := services.NewTeamService()
 		response, err := teamService.SubmitVote(r.Context(), userID, voteRequest.TeamID, activityID)
 		if err != nil {
@@ -291,9 +335,11 @@ func main() {
 			http.Error(w, fmt.Sprintf("Failed to submit vote: %v", err), http.StatusBadRequest)
 			return
 		}
-		
+
 		log.Printf("✅ [API] Vote submitted successfully")
-		
+
+		// Cache will expire naturally with TTL - no manual invalidation for high concurrency
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
@@ -306,14 +352,14 @@ func main() {
 		vars := mux.Vars(r)
 		activityID := vars["id"]
 		log.Printf("📊 [API] GET /api/activities/%s/vote-status", activityID)
-		
+
 		_, _, userID, err := extractUserFromToken(r)
 		if err != nil {
 			log.Printf("❌ [API] Failed to extract user from token: %v", err)
 			http.Error(w, fmt.Sprintf("Authentication required: %v", err), http.StatusUnauthorized)
 			return
 		}
-		
+
 		teamService := services.NewTeamService()
 		voteStatus, err := teamService.GetUserVoteStatus(r.Context(), userID, activityID)
 		if err != nil {
@@ -321,9 +367,9 @@ func main() {
 			http.Error(w, fmt.Sprintf("Failed to get vote status: %v", err), http.StatusInternalServerError)
 			return
 		}
-		
+
 		log.Printf("✅ [API] Vote status retrieved - HasVoted: %v", voteStatus.HasVoted)
-		
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
@@ -335,34 +381,39 @@ func main() {
 	router.HandleFunc("/api/user/profile", authHandlers.HandleGetUserProfile).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/user/profile", authHandlers.HandleUpdateUserProfile).Methods("POST", "OPTIONS")
 	router.HandleFunc("/api/user/profile/create", authHandlers.HandleCreateInitialUserProfile).Methods("POST", "OPTIONS")
+	router.HandleFunc("/api/user/profile/personal-info", authHandlers.HandleUpdatePersonalInfo).Methods("POST", "OPTIONS")
 
 	// Terms and PDPA routes
 	router.HandleFunc("/api/terms", authHandlers.HandleGetTerms).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/user/accept-terms", authHandlers.HandleAcceptTerms).Methods("POST", "OPTIONS")
+	
+	// Activity rules routes
+	router.HandleFunc("/api/activity/rules", authHandlers.HandleGetActivityRules).Methods("GET", "OPTIONS")
+	router.HandleFunc("/api/user/accept-activity-rules", authHandlers.HandleAcceptActivityRules).Methods("POST", "OPTIONS")
+	
+	// Token status and re-authorization routes
+	router.HandleFunc("/api/user/token-status", api.HandleTokenStatus).Methods("GET", "OPTIONS")
+	router.HandleFunc("/api/user/force-reauth", api.HandleForceReauth).Methods("GET", "OPTIONS")
+	
 
 	// Legacy routes (plural) for backward compatibility
 	router.HandleFunc("/api/users/profile", authHandlers.HandleGetUserProfile).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/users/profile", authHandlers.HandleUpdateUserProfile).Methods("PUT", "OPTIONS")
 
-	// Health check endpoint
+	// Health check endpoint with simple DB ping only
 	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		// Check database health
-		dbHealth := "connected"
-		if err := database.HealthCheck(); err != nil {
-			dbHealth = "disconnected"
-		}
+		w.Header().Set("Content-Type", "application/json")
 
 		health := map[string]interface{}{
 			"status":    "healthy",
-			"timestamp": "2025-01-20T00:00:00Z",
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
 			"version":   "1.0.0",
-			"services": map[string]string{
-				"database": dbHealth,
+			"services": map[string]interface{}{
+				"database": checkDatabaseHealth(),
 				"api":      "running",
 			},
 		}
 
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(health)
 	}).Methods("GET")
 
@@ -386,7 +437,7 @@ func main() {
 	} else {
 		fmt.Printf("🔑 GOOGLE_CLIENT_SECRET: (not set)\n")
 	}
-	
+
 	// Additional YouTube API related environment variables
 	youtubeAPIKey := os.Getenv("YOUTUBE_API_KEY")
 	if youtubeAPIKey == "" {
@@ -407,10 +458,36 @@ func main() {
 	}())
 	fmt.Printf("🌐 FRONTEND_URL: %s\n", os.Getenv("FRONTEND_URL"))
 	fmt.Printf("🌐 REDIRECT_URL: %s\n", os.Getenv("REDIRECT_URL"))
+	fmt.Printf("🌐 ALLOWED_ORIGINS: %s\n", os.Getenv("ALLOWED_ORIGINS"))
 
 	// Start server
 	fmt.Printf("🚀 Server is running on port %s\n", port)
 	log.Fatal(http.ListenAndServe(":"+port, router))
+}
+
+// checkDatabaseHealth checks if the database is healthy
+func checkDatabaseHealth() map[string]interface{} {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	db := database.GetDB()
+	if db == nil {
+		return map[string]interface{}{
+			"status": "unhealthy",
+			"error":  "database connection not initialized",
+		}
+	}
+
+	if err := db.Ping(ctx); err != nil {
+		return map[string]interface{}{
+			"status": "unhealthy",
+			"error":  err.Error(),
+		}
+	}
+
+	return map[string]interface{}{
+		"status": "healthy",
+	}
 }
 
 // extractUserFromToken extracts user information from JWT token with proper verification

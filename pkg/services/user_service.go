@@ -4,8 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/gamemini/youtube/pkg/models"
@@ -67,8 +73,16 @@ func (s *UserService) CreateOrUpdateUserFromOAuth(ctx context.Context, googleID,
 	}
 
 	if err := s.userRepo.CreateUserSession(ctx, session); err != nil {
-		log.Printf("⚠️  Failed to create session (continuing): %v", err)
-		// Don't fail the request if session creation fails
+		log.Printf("❌ Failed to create user session: %v", err)
+		// Check if it's the varchar(255) issue specifically
+		if strings.Contains(err.Error(), "value too long for type character varying(255)") {
+			log.Printf("🔧 Detected session token length issue - run migration 008_fix_session_token_length.sql")
+			return nil, fmt.Errorf("session creation failed due to token length limitation - database migration required: %w", err)
+		}
+		// For other session creation issues, log but continue (temporary degraded service)
+		log.Printf("⚠️  Session creation failed but continuing with authentication - sessions may not be properly tracked")
+	} else {
+		log.Printf("✅ User session created successfully - SessionID: %s", session.ID)
 	}
 
 	return &UserAuthData{
@@ -110,8 +124,16 @@ func (s *UserService) CreateOrUpdateUserFromOAuthWithTokens(ctx context.Context,
 	}
 
 	if err := s.userRepo.CreateUserSession(ctx, session); err != nil {
-		log.Printf("⚠️  Failed to create session (continuing): %v", err)
-		// Don't fail the request if session creation fails
+		log.Printf("❌ Failed to create user session: %v", err)
+		// Check if it's the varchar(255) issue specifically
+		if strings.Contains(err.Error(), "value too long for type character varying(255)") {
+			log.Printf("🔧 Detected session token length issue - run migration 008_fix_session_token_length.sql")
+			return nil, fmt.Errorf("session creation failed due to token length limitation - database migration required: %w", err)
+		}
+		// For other session creation issues, log but continue (temporary degraded service)
+		log.Printf("⚠️  Session creation failed but continuing with authentication - sessions may not be properly tracked")
+	} else {
+		log.Printf("✅ User session created successfully - SessionID: %s", session.ID)
 	}
 
 	return &UserAuthData{
@@ -130,17 +152,6 @@ func (s *UserService) UpdateUserProfile(ctx context.Context, userID string, upda
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Check if national ID is already taken by another user
-	if updates.NationalID != "" {
-		existingUser, err := s.userRepo.GetUserByNationalID(ctx, updates.NationalID)
-		if err != nil {
-			log.Printf("❌ Error checking national ID uniqueness: %v", err)
-			return nil, fmt.Errorf("failed to validate national ID: %w", err)
-		}
-		if existingUser != nil && existingUser.ID != userID {
-			return nil, fmt.Errorf("national ID already exists for another user")
-		}
-	}
 
 	// Update user profile atomically
 	err := s.userRepo.UpdateUserProfileAtomic(ctx, userID, updates)
@@ -157,6 +168,42 @@ func (s *UserService) UpdateUserProfile(ctx context.Context, userID string, upda
 	}
 
 	log.Printf("✅ User profile updated successfully - UserID: %s", userID)
+	return user, nil
+}
+
+// UpdateUserProfilePersonalInfoOnly updates only personal information fields without requiring terms acceptance
+func (s *UserService) UpdateUserProfilePersonalInfoOnly(ctx context.Context, userID string, updates *models.UpdateUserProfileRequest) (*models.User, error) {
+	log.Printf("📝 Updating personal info only - UserID: %s", userID)
+
+	// Basic validation for personal info fields only
+	if updates.FirstName == "" {
+		return nil, fmt.Errorf("first name is required")
+	}
+	if updates.LastName == "" {
+		return nil, fmt.Errorf("last name is required")
+	}
+
+	// Optional validation for phone if provided
+	if updates.Phone != "" && len(updates.Phone) != 10 {
+		return nil, fmt.Errorf("phone number must be 10 digits")
+	}
+
+
+	// Update only personal information fields
+	err := s.userRepo.UpdateUserPersonalInfoOnly(ctx, userID, updates.FirstName, updates.LastName, updates.Phone)
+	if err != nil {
+		log.Printf("❌ Failed to update personal info: %v", err)
+		return nil, fmt.Errorf("failed to update personal info: %w", err)
+	}
+
+	// Fetch updated user
+	user, err := s.userRepo.GetUserByID(ctx, userID)
+	if err != nil {
+		log.Printf("❌ Failed to fetch updated user: %v", err)
+		return nil, fmt.Errorf("failed to fetch updated user: %w", err)
+	}
+
+	log.Printf("✅ Personal info updated successfully - UserID: %s", userID)
 	return user, nil
 }
 
@@ -197,15 +244,21 @@ func (s *UserService) AcceptTerms(ctx context.Context, userID, termsVersion, pdp
 
 // GenerateAccessToken generates a JWT access token for the user
 func (s *UserService) GenerateAccessToken(user *models.User) (string, time.Time, error) {
-	expiresAt := time.Now().Add(24 * time.Hour) // 24 hour expiration
+	// Extended expiration to 7 days for better UX (reduced auth interruptions)
+	// Frontend should handle token refresh before expiration
+	expiresAt := time.Now().Add(7 * 24 * time.Hour) // 7 days expiration
 
+	now := time.Now()
 	claims := jwt.MapClaims{
 		"user_id":   user.ID,
 		"google_id": user.GoogleID,
 		"email":     user.Email,
 		"exp":       expiresAt.Unix(),
-		"iat":       time.Now().Unix(),
+		"iat":       now.Unix(),
+		"nbf":       now.Unix(), // Not before - prevents token use before issued
 		"iss":       "youtube-activity-platform",
+		"aud":       "youtube-activity-frontend", // Audience - specific to our frontend
+		"sub":       user.ID, // Subject - standard JWT claim for user identity
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -214,6 +267,7 @@ func (s *UserService) GenerateAccessToken(user *models.User) (string, time.Time,
 		return "", time.Time{}, fmt.Errorf("failed to sign token: %w", err)
 	}
 
+	log.Printf("🔑 Generated JWT token for user %s (expires: %s)", user.ID, expiresAt.Format(time.RFC3339))
 	return tokenString, expiresAt, nil
 }
 
@@ -227,13 +281,44 @@ func (s *UserService) ValidateAccessToken(tokenString string) (*models.User, err
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("invalid token: %w", err)
+		// Provide more specific error messages for common JWT issues
+		// Check for specific error types in jwt/v5
+		errorMsg := err.Error()
+		switch {
+		case strings.Contains(errorMsg, "token is malformed"):
+			return nil, fmt.Errorf("token is malformed")
+		case strings.Contains(errorMsg, "token has expired") || strings.Contains(errorMsg, "token is expired"):
+			return nil, fmt.Errorf("token has expired")
+		case strings.Contains(errorMsg, "token used before valid") || strings.Contains(errorMsg, "not valid yet"):
+			return nil, fmt.Errorf("token is not valid yet")
+		case strings.Contains(errorMsg, "issuer") || strings.Contains(errorMsg, "audience"):
+			return nil, fmt.Errorf("token has invalid claims: issuer or audience mismatch")
+		case strings.Contains(errorMsg, "signature is invalid"):
+			return nil, fmt.Errorf("token has invalid signature")
+		default:
+			return nil, fmt.Errorf("invalid token: %w", err)
+		}
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+		// Validate required claims
 		userID := fmt.Sprintf("%v", claims["user_id"])
 		if userID == "" {
-			return nil, fmt.Errorf("invalid token: missing user_id")
+			return nil, fmt.Errorf("invalid token: missing user_id claim")
+		}
+
+		// Validate issuer if present
+		if iss, ok := claims["iss"].(string); ok {
+			if iss != "youtube-activity-platform" {
+				return nil, fmt.Errorf("invalid token: invalid issuer")
+			}
+		}
+
+		// Validate audience if present
+		if aud, ok := claims["aud"].(string); ok {
+			if aud != "youtube-activity-frontend" {
+				return nil, fmt.Errorf("invalid token: invalid audience")
+			}
 		}
 
 		// Fetch current user data from database
@@ -242,6 +327,7 @@ func (s *UserService) ValidateAccessToken(tokenString string) (*models.User, err
 			return nil, fmt.Errorf("user not found: %w", err)
 		}
 
+		log.Printf("✅ Token validated successfully for user %s", userID)
 		return user, nil
 	}
 
@@ -264,12 +350,6 @@ func (s *UserService) validateUpdateRequest(updates *models.UpdateUserProfileReq
 	}
 	if updates.LastName == "" {
 		return fmt.Errorf("last name is required")
-	}
-	if updates.NationalID == "" {
-		return fmt.Errorf("national ID is required")
-	}
-	if len(updates.NationalID) != 13 {
-		return fmt.Errorf("national ID must be 13 digits")
 	}
 	if updates.Phone == "" {
 		return fmt.Errorf("phone number is required")
@@ -313,18 +393,60 @@ func (s *UserService) GetUserProfileWithVoteStatus(ctx context.Context, userID s
 	return response, nil
 }
 
-// CleanupExpiredSessions removes expired user sessions
-func (s *UserService) CleanupExpiredSessions(ctx context.Context) error {
+// CleanupExpiredSessions removes expired user sessions and returns count deleted
+func (s *UserService) CleanupExpiredSessions(ctx context.Context) (int64, error) {
 	log.Println("🧹 Cleaning up expired sessions...")
 	
-	err := s.userRepo.CleanExpiredSessions(ctx)
+	deletedCount, err := s.userRepo.CleanExpiredSessions(ctx)
 	if err != nil {
 		log.Printf("❌ Failed to cleanup expired sessions: %v", err)
-		return fmt.Errorf("failed to cleanup expired sessions: %w", err)
+		return 0, fmt.Errorf("failed to cleanup expired sessions: %w", err)
 	}
 	
-	log.Println("✅ Expired sessions cleaned up successfully")
-	return nil
+	if deletedCount > 0 {
+		log.Printf("✅ Cleaned up %d expired sessions", deletedCount)
+	} else {
+		log.Println("✅ No expired sessions to clean up")
+	}
+	
+	return deletedCount, nil
+}
+
+// StartSessionCleanupScheduler starts a background goroutine that periodically cleans expired sessions
+func (s *UserService) StartSessionCleanupScheduler(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = 1 * time.Hour // Default to 1 hour if invalid interval
+	}
+	
+	log.Printf("🚀 Starting session cleanup scheduler (interval: %v)", interval)
+	
+	// Initial cleanup on startup
+	go func() {
+		if count, err := s.CleanupExpiredSessions(ctx); err != nil {
+			log.Printf("⚠️  Initial session cleanup failed: %v", err)
+		} else if count > 0 {
+			log.Printf("🧹 Initial cleanup removed %d expired sessions", count)
+		}
+	}()
+	
+	// Periodic cleanup
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				log.Println("🛑 Session cleanup scheduler stopped due to context cancellation")
+				return
+			case <-ticker.C:
+				if count, err := s.CleanupExpiredSessions(context.Background()); err != nil {
+					log.Printf("⚠️  Scheduled session cleanup failed: %v", err)
+				} else if count > 0 {
+					log.Printf("🧹 Scheduled cleanup removed %d expired sessions", count)
+				}
+			}
+		}
+	}()
 }
 
 // GetUserOAuthTokens retrieves stored OAuth tokens for a user
@@ -400,21 +522,107 @@ func (s *UserService) RefreshUserOAuthToken(ctx context.Context, userID string) 
 func (s *UserService) refreshTokenWithGoogle(ctx context.Context, refreshToken string) (*models.OAuthTokenData, error) {
 	log.Printf("🔄 Calling Google token refresh endpoint")
 	
-	// For now, implement a mock refresh that extends the token
-	// In production, this would call Google's actual refresh endpoint
-	// POST https://oauth2.googleapis.com/token with refresh_token
+	// Get OAuth configuration
+	clientID := os.Getenv("GOOGLE_CLIENT_ID")
+	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
 	
-	newExpiry := time.Now().Add(time.Hour) // Google access tokens typically last 1 hour
-	
-	// Mock refreshed token data - in production you'd get this from Google's response
-	refreshedData := &models.OAuthTokenData{
-		AccessToken:  "refreshed_" + refreshToken[:20] + "_" + fmt.Sprintf("%d", time.Now().Unix()),
-		RefreshToken: refreshToken, // Refresh token usually stays the same
-		Expiry:       newExpiry,
-		TokenType:    "Bearer",
+	if clientID == "" || clientSecret == "" {
+		return nil, fmt.Errorf("missing Google OAuth credentials")
 	}
 	
-	log.Printf("✅ Token refreshed with Google (mock implementation)")
+	// Prepare token refresh request
+	data := url.Values{}
+	data.Set("client_id", clientID)
+	data.Set("client_secret", clientSecret)
+	data.Set("refresh_token", refreshToken)
+	data.Set("grant_type", "refresh_token")
+	
+	// Make HTTP request to Google's token endpoint
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://oauth2.googleapis.com/token", strings.NewReader(data.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create refresh request: %w", err)
+	}
+	
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	
+	log.Printf("🌐 Making token refresh request to Google")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to refresh token with Google: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read refresh response: %w", err)
+	}
+	
+	// Check for HTTP errors
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("❌ Google token refresh failed with status %d: %s", resp.StatusCode, string(body))
+		
+		// Parse error response for better error messages
+		var errorResp struct {
+			Error            string `json:"error"`
+			ErrorDescription string `json:"error_description"`
+		}
+		
+		if json.Unmarshal(body, &errorResp) == nil && errorResp.Error != "" {
+			switch errorResp.Error {
+			case "invalid_grant":
+				return nil, fmt.Errorf("refresh token is invalid or expired, user needs to re-authorize")
+			case "invalid_client":
+				return nil, fmt.Errorf("invalid OAuth client credentials")
+			default:
+				return nil, fmt.Errorf("token refresh failed: %s - %s", errorResp.Error, errorResp.ErrorDescription)
+			}
+		}
+		
+		return nil, fmt.Errorf("token refresh failed with status %d", resp.StatusCode)
+	}
+	
+	// Parse successful response
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token,omitempty"` // Google may rotate refresh token
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int    `json:"expires_in"`
+		Scope        string `json:"scope,omitempty"`
+	}
+	
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return nil, fmt.Errorf("failed to parse token response: %w", err)
+	}
+	
+	// Validate required fields
+	if tokenResp.AccessToken == "" {
+		return nil, fmt.Errorf("no access token in refresh response")
+	}
+	
+	// Calculate expiry time
+	newExpiry := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	
+	// Use new refresh token if provided, otherwise keep the original
+	newRefreshToken := refreshToken
+	if tokenResp.RefreshToken != "" {
+		newRefreshToken = tokenResp.RefreshToken
+		log.Printf("🔄 Google provided new refresh token")
+	}
+	
+	// Create refreshed token data
+	refreshedData := &models.OAuthTokenData{
+		AccessToken:  tokenResp.AccessToken,
+		RefreshToken: newRefreshToken,
+		Expiry:       newExpiry,
+		TokenType:    tokenResp.TokenType,
+	}
+	
+	log.Printf("✅ Token refreshed successfully with Google - Expires: %s", newExpiry.Format(time.RFC3339))
 	return refreshedData, nil
 }
 
@@ -431,4 +639,24 @@ func (s *UserService) IsOAuthTokenExpired(ctx context.Context, userID string) (b
 	
 	// Token is expired if expiry time is before now (with 5 minute buffer)
 	return user.GoogleTokenExpiry.Before(time.Now().Add(5*time.Minute)), nil
+}
+
+// AcceptActivityRules handles activity rules acceptance for a user
+func (s *UserService) AcceptActivityRules(ctx context.Context, userID, ipAddress, userAgent string) error {
+	log.Printf("🏆 Processing activity rules acceptance - UserID: %s", userID)
+
+	// Get current active activity rules version
+	currentRules, err := s.userRepo.GetActiveActivityRules(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get current activity rules: %w", err)
+	}
+
+	// Accept the activity rules
+	err = s.userRepo.AcceptActivityRules(ctx, userID, currentRules.Version, ipAddress, userAgent)
+	if err != nil {
+		return fmt.Errorf("failed to accept activity rules: %w", err)
+	}
+
+	log.Printf("✅ Activity rules accepted successfully - UserID: %s, Version: %s", userID, currentRules.Version)
+	return nil
 }
