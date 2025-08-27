@@ -62,17 +62,10 @@ func HandleSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
 	log.Printf("🔑 [SUBSCRIPTION-CHECK] User ID extracted from JWT: %s", userID)
 
 	// Get target channel ID from request query parameters
-	targetChannelID := r.URL.Query().Get("channel_id")
-	if targetChannelID == "" {
-		log.Printf("❌ [SUBSCRIPTION-CHECK] No channel_id provided in query parameters")
-		sendErrorResponse(w, "Channel ID is required", http.StatusBadRequest)
-		return
-	}
-	
-	log.Printf("🎯 [SUBSCRIPTION-CHECK] Checking subscription for user %s to channel: %s", userID, targetChannelID)
+	log.Printf("🎯 [SUBSCRIPTION-CHECK] Checking subscription for user %s", userID)
 
 	// Check subscription using OAuth tokens from database
-	isSubscribed, verificationMethod, err := checkUserSubscriptionWithOAuth(r.Context(), userID, targetChannelID)
+	isSubscribed, verificationMethod, err := checkUserSubscriptionWithOAuth(r.Context(), userID)
 	if err != nil {
 		log.Printf("❌ [SUBSCRIPTION-CHECK] Subscription check failed: %v", err)
 		errMsg, statusCode := handleYouTubeAPIError(err)
@@ -84,12 +77,15 @@ func HandleSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
 	log.Printf("✅ [SUBSCRIPTION-CHECK] Subscription check completed - subscribed: %t, method: %s", isSubscribed, verificationMethod)
 
 	// Create response with detailed information
+	// Get channel ID from environment for response
+	channelID := os.Getenv("TARGET_YOUTUBE_CHANNEL_ID")
+	
 	response := ActivityResponse{
 		Success: true,
 		Message: "Subscription check completed",
 		Data: map[string]interface{}{
 			"is_subscribed":       isSubscribed,
-			"channel_id":          targetChannelID,
+			"channel_id":          channelID,
 			"user_id":             userID,
 			"verification_method": verificationMethod,
 		},
@@ -134,12 +130,9 @@ func HandleJoinActivity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get channel ID from database based on activity ID
-	// In a real app, you would look up the activity in the database
-	channelID := "xxx" // Hardcoded for demonstration, should be retrieved from database
-
 	// Check if the user is subscribed to the specified channel
-	isSubscribed, err := checkSubscription(youtubeService, channelID)
+	// Channel ID is now retrieved from environment variable in checkSubscription function
+	isSubscribed, err := checkSubscription(youtubeService)
 	if err != nil {
 		errMsg, statusCode := handleYouTubeAPIError(err)
 		sendErrorResponse(w, errMsg, statusCode)
@@ -328,7 +321,14 @@ func createYouTubeServiceWithAPIKey(ctx context.Context, apiKey string) (*youtub
 }
 
 // checkSubscription checks if the authenticated user is subscribed to the specified channel (legacy function)
-func checkSubscription(service *youtube.Service, channelID string) (bool, error) {
+func checkSubscription(service *youtube.Service) (bool, error) {
+	// Get channel ID from environment variable
+	channelID := os.Getenv("TARGET_YOUTUBE_CHANNEL_ID")
+	if channelID == "" {
+		log.Printf("❌ [CHECK-SUBSCRIPTION] TARGET_YOUTUBE_CHANNEL_ID not set in environment")
+		return false, fmt.Errorf("target channel ID not configured")
+	}
+	
 	log.Printf("🔍 [CHECK-SUBSCRIPTION] Starting subscription check for channel: %s", channelID)
 	
 	// Call the YouTube API to check subscriptions using the subscriptions.list API
@@ -439,7 +439,7 @@ func extractUserIDFromJWT(tokenString string) (string, error) {
 }
 
 // checkUserSubscriptionWithOAuth checks if a user is subscribed using OAuth tokens from database
-func checkUserSubscriptionWithOAuth(ctx context.Context, userID, targetChannelID string) (bool, string, error) {
+func checkUserSubscriptionWithOAuth(ctx context.Context, userID string) (bool, string, error) {
 	log.Printf("🔍 [OAUTH-SUBSCRIPTION] Starting OAuth-based subscription check for user %s", userID)
 	
 	// Initialize services
@@ -494,7 +494,7 @@ func checkUserSubscriptionWithOAuth(ctx context.Context, userID, targetChannelID
 	log.Printf("✅ [OAUTH-SUBSCRIPTION] YouTube service created successfully")
 	
 	// Check subscription using the authenticated YouTube API
-	isSubscribed, err := checkSubscription(youtubeService, targetChannelID)
+	isSubscribed, err := checkSubscription(youtubeService)
 	if err != nil {
 		log.Printf("❌ [OAUTH-SUBSCRIPTION] Subscription check failed: %v", err)
 		return false, "api_call_failed", fmt.Errorf("subscription check failed: %w", err)

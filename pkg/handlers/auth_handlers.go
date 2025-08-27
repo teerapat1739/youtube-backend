@@ -116,7 +116,6 @@ func (h *AuthHandlers) HandleUpdateUserProfile(w http.ResponseWriter, r *http.Re
 		FirstName   string `json:"first_name"`
 		LastName    string `json:"last_name"`
 		Phone       string `json:"phone"`
-		NationalID  string `json:"national_id"`
 		AcceptTerms bool   `json:"accept_terms"`
 		AcceptPDPA  bool   `json:"accept_pdpa"`
 	}
@@ -137,7 +136,6 @@ func (h *AuthHandlers) HandleUpdateUserProfile(w http.ResponseWriter, r *http.Re
 	updates := &models.UpdateUserProfileRequest{
 		FirstName:   profileData.FirstName,
 		LastName:    profileData.LastName,
-		NationalID:  profileData.NationalID,
 		Phone:       profileData.Phone,
 		AcceptTerms: profileData.AcceptTerms,
 		AcceptPDPA:  profileData.AcceptPDPA,
@@ -159,6 +157,67 @@ func (h *AuthHandlers) HandleUpdateUserProfile(w http.ResponseWriter, r *http.Re
 	response := map[string]interface{}{
 		"success": true,
 		"message": "User profile updated successfully",
+		"data": map[string]interface{}{
+			"user": updatedUser,
+		},
+	}
+
+	h.writeJSONResponse(w, response)
+}
+
+// HandleUpdatePersonalInfo handles personal information updates without requiring terms acceptance
+func (h *AuthHandlers) HandleUpdatePersonalInfo(w http.ResponseWriter, r *http.Request) {
+	log.Println("📝 Handling update personal info request")
+
+	// Extract user from JWT token
+	user, err := h.extractUserFromToken(r)
+	if err != nil {
+		log.Printf("❌ Failed to extract user from token: %v", err)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Parse request body - only personal info fields
+	var personalData struct {
+		FirstName string `json:"first_name"`
+		LastName  string `json:"last_name"`
+		Phone     string `json:"phone"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&personalData); err != nil {
+		log.Printf("❌ Failed to decode request body: %v", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Basic validation for required fields
+	if personalData.FirstName == "" || personalData.LastName == "" {
+		http.Error(w, "First name and last name are required", http.StatusBadRequest)
+		return
+	}
+
+	// Update user profile - only personal info fields, preserve existing terms/PDPA status
+	updates := &models.UpdateUserProfileRequest{
+		FirstName: personalData.FirstName,
+		LastName:  personalData.LastName,
+		Phone:     personalData.Phone,
+		// Don't change terms/PDPA acceptance status
+		AcceptTerms: true, // This will be ignored by the service if we modify it correctly
+		AcceptPDPA:  true,
+	}
+
+	updatedUser, err := h.userService.UpdateUserProfilePersonalInfoOnly(r.Context(), user.ID, updates)
+	if err != nil {
+		log.Printf("❌ Failed to update personal info: %v", err)
+		http.Error(w, "Failed to update personal info", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("✅ Personal info updated successfully - UserID: %s", user.ID)
+
+	response := map[string]interface{}{
+		"success": true,
+		"message": "Personal information updated successfully",
 		"data": map[string]interface{}{
 			"user": updatedUser,
 		},

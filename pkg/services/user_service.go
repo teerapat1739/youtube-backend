@@ -152,17 +152,6 @@ func (s *UserService) UpdateUserProfile(ctx context.Context, userID string, upda
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
-	// Check if national ID is already taken by another user
-	if updates.NationalID != "" {
-		existingUser, err := s.userRepo.GetUserByNationalID(ctx, updates.NationalID)
-		if err != nil {
-			log.Printf("❌ Error checking national ID uniqueness: %v", err)
-			return nil, fmt.Errorf("failed to validate national ID: %w", err)
-		}
-		if existingUser != nil && existingUser.ID != userID {
-			return nil, fmt.Errorf("national ID already exists for another user")
-		}
-	}
 
 	// Update user profile atomically
 	err := s.userRepo.UpdateUserProfileAtomic(ctx, userID, updates)
@@ -179,6 +168,42 @@ func (s *UserService) UpdateUserProfile(ctx context.Context, userID string, upda
 	}
 
 	log.Printf("✅ User profile updated successfully - UserID: %s", userID)
+	return user, nil
+}
+
+// UpdateUserProfilePersonalInfoOnly updates only personal information fields without requiring terms acceptance
+func (s *UserService) UpdateUserProfilePersonalInfoOnly(ctx context.Context, userID string, updates *models.UpdateUserProfileRequest) (*models.User, error) {
+	log.Printf("📝 Updating personal info only - UserID: %s", userID)
+
+	// Basic validation for personal info fields only
+	if updates.FirstName == "" {
+		return nil, fmt.Errorf("first name is required")
+	}
+	if updates.LastName == "" {
+		return nil, fmt.Errorf("last name is required")
+	}
+
+	// Optional validation for phone if provided
+	if updates.Phone != "" && len(updates.Phone) != 10 {
+		return nil, fmt.Errorf("phone number must be 10 digits")
+	}
+
+
+	// Update only personal information fields
+	err := s.userRepo.UpdateUserPersonalInfoOnly(ctx, userID, updates.FirstName, updates.LastName, updates.Phone)
+	if err != nil {
+		log.Printf("❌ Failed to update personal info: %v", err)
+		return nil, fmt.Errorf("failed to update personal info: %w", err)
+	}
+
+	// Fetch updated user
+	user, err := s.userRepo.GetUserByID(ctx, userID)
+	if err != nil {
+		log.Printf("❌ Failed to fetch updated user: %v", err)
+		return nil, fmt.Errorf("failed to fetch updated user: %w", err)
+	}
+
+	log.Printf("✅ Personal info updated successfully - UserID: %s", userID)
 	return user, nil
 }
 
@@ -325,12 +350,6 @@ func (s *UserService) validateUpdateRequest(updates *models.UpdateUserProfileReq
 	}
 	if updates.LastName == "" {
 		return fmt.Errorf("last name is required")
-	}
-	if updates.NationalID == "" {
-		return fmt.Errorf("national ID is required")
-	}
-	if len(updates.NationalID) != 13 {
-		return fmt.Errorf("national ID must be 13 digits")
 	}
 	if updates.Phone == "" {
 		return fmt.Errorf("phone number is required")

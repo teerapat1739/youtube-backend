@@ -64,10 +64,10 @@ func HandleAnanpedSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("🎯 [ANNANPED-CHECK] Checking if user %s is subscribed to Ananped channel: %s", userID, AnanpedChannelID)
+	log.Printf("🎯 [ANNANPED-CHECK] Checking if user %s is subscribed to Ananped channel", userID)
 
 	// Check if the user is subscribed to Ananped channel using OAuth tokens
-	isSubscribed, verificationMethod, err := checkUserSubscriptionWithOAuth(r.Context(), userID, AnanpedChannelID)
+	isSubscribed, verificationMethod, err := checkUserSubscriptionWithOAuth(r.Context(), userID)
 	if err != nil {
 		log.Printf("❌ [ANNANPED-CHECK] Subscription check failed: %v", err)
 		// For Ananped celebration, we'll be permissive and assume not subscribed

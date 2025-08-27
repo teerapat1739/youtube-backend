@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/gamemini/youtube/pkg/models"
@@ -23,7 +22,7 @@ func NewUserProfileRepository(db *sqlx.DB) *UserProfileRepository {
 func (r *UserProfileRepository) GetUserProfile(userID string) (*models.User, error) {
 	user := &models.User{}
 	query := `
-		SELECT id, google_id, email, first_name, last_name, national_id, phone,
+		SELECT id, google_id, email, first_name, last_name, phone,
 			   terms_accepted, terms_version, pdpa_accepted, pdpa_version,
 			   profile_completed, youtube_subscribed, subscription_verified_at,
 			   created_at, updated_at
@@ -43,7 +42,7 @@ func (r *UserProfileRepository) GetUserProfile(userID string) (*models.User, err
 func (r *UserProfileRepository) GetUserByGoogleID(googleID string) (*models.User, error) {
 	user := &models.User{}
 	query := `
-		SELECT id, google_id, email, first_name, last_name, national_id, phone,
+		SELECT id, google_id, email, first_name, last_name, phone,
 			   terms_accepted, terms_version, pdpa_accepted, pdpa_version,
 			   profile_completed, youtube_subscribed, subscription_verified_at,
 			   created_at, updated_at
@@ -73,10 +72,10 @@ func (r *UserProfileRepository) CreateUserProfile(req *models.UpdateUserProfileR
 	}
 
 	query := `
-		INSERT INTO users (google_id, email, first_name, last_name, national_id, phone,
+		INSERT INTO users (google_id, email, first_name, last_name, phone,
 						   terms_accepted, terms_version, pdpa_accepted, pdpa_version)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		RETURNING id, google_id, email, first_name, last_name, national_id, phone,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id, google_id, email, first_name, last_name, phone,
 				  terms_accepted, terms_version, pdpa_accepted, pdpa_version,
 				  profile_completed, youtube_subscribed, subscription_verified_at,
 				  created_at, updated_at
@@ -84,7 +83,7 @@ func (r *UserProfileRepository) CreateUserProfile(req *models.UpdateUserProfileR
 
 	user := &models.User{}
 	err = r.db.Get(user, query,
-		googleID, email, req.FirstName, req.LastName, req.NationalID, req.Phone,
+		googleID, email, req.FirstName, req.LastName, req.Phone,
 		req.AcceptTerms, termsVersion, req.AcceptPDPA, pdpaVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user profile: %w", err)
@@ -117,11 +116,11 @@ func (r *UserProfileRepository) UpdateUserProfile(userID string, req *models.Upd
 
 	query := `
 		UPDATE users 
-		SET first_name = $2, last_name = $3, national_id = $4, phone = $5,
-			terms_accepted = $6, terms_version = $7, pdpa_accepted = $8, pdpa_version = $9,
+		SET first_name = $2, last_name = $3, phone = $4,
+			terms_accepted = $5, terms_version = $6, pdpa_accepted = $7, pdpa_version = $8,
 			updated_at = NOW()
 		WHERE id = $1
-		RETURNING id, google_id, email, first_name, last_name, national_id, phone,
+		RETURNING id, google_id, email, first_name, last_name, phone,
 				  terms_accepted, terms_version, pdpa_accepted, pdpa_version,
 				  profile_completed, youtube_subscribed, subscription_verified_at,
 				  created_at, updated_at
@@ -129,7 +128,7 @@ func (r *UserProfileRepository) UpdateUserProfile(userID string, req *models.Upd
 
 	user := &models.User{}
 	err = r.db.Get(user, query,
-		userID, req.FirstName, req.LastName, req.NationalID, req.Phone,
+		userID, req.FirstName, req.LastName, req.Phone,
 		req.AcceptTerms, termsVersion, req.AcceptPDPA, pdpaVersion)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update user profile: %w", err)
@@ -161,19 +160,9 @@ func (r *UserProfileRepository) ValidateUserProfileData(req *models.UserProfileV
 		errors["last_name"] = err.Error()
 	}
 
-	// Validate National ID
-	if err := r.validateThaiNationalID(req.NationalID); err != nil {
-		errors["national_id"] = err.Error()
-	}
-
 	// Validate phone number
 	if err := r.validateThaiPhone(req.Phone); err != nil {
 		errors["phone"] = err.Error()
-	}
-
-	// Check for duplicate National ID
-	if r.isNationalIDExists(req.NationalID) {
-		errors["national_id"] = "National ID already exists"
 	}
 
 	if len(errors) > 0 {
@@ -186,10 +175,9 @@ func (r *UserProfileRepository) ValidateUserProfileData(req *models.UserProfileV
 // ValidateUpdateUserProfileData for UpdateUserProfileRequest
 func (r *UserProfileRepository) ValidateUpdateUserProfileData(req *models.UpdateUserProfileRequest) error {
 	validation := &models.UserProfileValidationRequest{
-		FirstName:  req.FirstName,
-		LastName:   req.LastName,
-		NationalID: req.NationalID,
-		Phone:      req.Phone,
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		Phone:     req.Phone,
 	}
 	return r.ValidateUserProfileData(validation)
 }
@@ -271,22 +259,6 @@ func (r *UserProfileRepository) validateThaiName(name, field string) error {
 	return nil
 }
 
-func (r *UserProfileRepository) validateThaiNationalID(nationalID string) error {
-	// Remove non-digits
-	clean := regexp.MustCompile(`[^0-9]`).ReplaceAllString(nationalID, "")
-
-	if len(clean) != 13 {
-		return fmt.Errorf("national ID must be exactly 13 digits")
-	}
-
-	// Validate checksum
-	if !r.isValidThaiNationalIDChecksum(clean) {
-		return fmt.Errorf("invalid national ID checksum")
-	}
-
-	return nil
-}
-
 func (r *UserProfileRepository) validateThaiPhone(phone string) error {
 	// Remove non-digits
 	clean := regexp.MustCompile(`[^0-9]`).ReplaceAllString(phone, "")
@@ -315,31 +287,6 @@ func (r *UserProfileRepository) validateThaiPhone(phone string) error {
 	}
 
 	return nil
-}
-
-func (r *UserProfileRepository) isValidThaiNationalIDChecksum(nationalID string) bool {
-	if len(nationalID) != 13 {
-		return false
-	}
-
-	sum := 0
-	for i := 0; i < 12; i++ {
-		digit, _ := strconv.Atoi(string(nationalID[i]))
-		sum += digit * (13 - i)
-	}
-
-	remainder := sum % 11
-	checkDigit := (11 - remainder) % 10
-	lastDigit, _ := strconv.Atoi(string(nationalID[12]))
-
-	return checkDigit == lastDigit
-}
-
-func (r *UserProfileRepository) isNationalIDExists(nationalID string) bool {
-	var count int
-	query := "SELECT COUNT(*) FROM users WHERE national_id = $1"
-	err := r.db.Get(&count, query, nationalID)
-	return err == nil && count > 0
 }
 
 // AcceptTerms updates user's terms acceptance

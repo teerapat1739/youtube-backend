@@ -44,7 +44,7 @@ func (h *EnhancedOAuthHandler) HandleLogin(w http.ResponseWriter, r *http.Reques
 
 	// Configure OAuth to request offline access and force consent to guarantee refresh token
 	// Use "consent" to ensure user sees consent screen and refresh token is issued
-	url := h.oauthConfig.AuthCodeURL(state, 
+	url := h.oauthConfig.AuthCodeURL(state,
 		oauth2.AccessTypeOffline,
 		oauth2.SetAuthURLParam("prompt", "consent"))
 	log.Printf("🔄 Redirecting to Google OAuth: %s", url)
@@ -100,7 +100,7 @@ func (h *EnhancedOAuthHandler) HandleCallback(w http.ResponseWriter, r *http.Req
 		log.Printf("   - Visit: https://myaccount.google.com/permissions")
 		log.Printf("   - Find your app and click 'Remove access'")
 		log.Printf("   - Re-authorize to get refresh token")
-		
+
 		// Redirect with error instead of continuing with degraded functionality
 		log.Printf("❌ [REDIRECT] Redirecting to frontend with refresh token error")
 		http.Redirect(w, r, frontendURL+"/?error=no_refresh_token", http.StatusTemporaryRedirect)
@@ -130,17 +130,22 @@ func (h *EnhancedOAuthHandler) HandleCallback(w http.ResponseWriter, r *http.Req
 
 	// Determine the appropriate redirect route based on user status
 	var targetRoute string
-	if authData.User.ProfileCompleted && authData.User.TermsAccepted && authData.User.PDPAAccepted {
-		// User has completed onboarding, redirect to home
+	personalInfoComplete := isPersonalInfoComplete(authData.User)
+
+	if personalInfoComplete && authData.User.TermsAccepted && authData.User.PDPAAccepted {
+		// User has completed all requirements, redirect to home
 		targetRoute = "/home"
 	} else {
 		// User needs to complete onboarding, redirect to appropriate step
-		if !authData.User.ProfileCompleted {
-			targetRoute = "/onboarding?step=profile"
+		if !personalInfoComplete {
+			// User needs to complete personal information
+			targetRoute = "/personal-info"
 		} else if !authData.User.TermsAccepted || !authData.User.PDPAAccepted {
-			targetRoute = "/onboarding?step=terms"
+			// User has personal info but needs to accept terms
+			targetRoute = "/pdpa-terms"
 		} else {
-			targetRoute = "/onboarding?step=subscription"
+			// Fallback for any other incomplete state
+			targetRoute = "/home"
 		}
 	}
 
@@ -198,6 +203,9 @@ func (h *EnhancedOAuthHandler) HandleUserInfo(w http.ResponseWriter, r *http.Req
 
 	log.Printf("✅ User info retrieved - UserID: %s, Email: %s", user.ID, user.Email)
 
+	// Determine if personal info is complete based on actual field values
+	personalInfoComplete := isPersonalInfoComplete(user)
+
 	// Return user information
 	response := map[string]interface{}{
 		"id":                user.GoogleID,
@@ -206,7 +214,7 @@ func (h *EnhancedOAuthHandler) HandleUserInfo(w http.ResponseWriter, r *http.Req
 		"name":              getUserDisplayName(user),
 		"picture":           "", // Could be added later
 		"user_id":           user.ID,
-		"profile_completed": user.ProfileCompleted,
+		"profile_completed": personalInfoComplete, // Use actual field check instead of DB flag
 		"terms_accepted":    user.TermsAccepted,
 		"pdpa_accepted":     user.PDPAAccepted,
 	}
@@ -228,6 +236,9 @@ func (h *EnhancedOAuthHandler) HandleCreateInitialProfile(w http.ResponseWriter,
 
 	log.Printf("✅ User found for profile creation - UserID: %s", user.ID)
 
+	// Determine if personal info is complete based on actual field values
+	personalInfoComplete := isPersonalInfoComplete(user)
+
 	// Return user data (user already exists from OAuth callback)
 	response := map[string]interface{}{
 		"success": true,
@@ -239,11 +250,10 @@ func (h *EnhancedOAuthHandler) HandleCreateInitialProfile(w http.ResponseWriter,
 				"email":             user.Email,
 				"first_name":        user.FirstName,
 				"last_name":         user.LastName,
-				"national_id":       user.NationalID,
 				"phone":             user.Phone,
 				"terms_accepted":    user.TermsAccepted,
 				"pdpa_accepted":     user.PDPAAccepted,
-				"profile_completed": user.ProfileCompleted,
+				"profile_completed": personalInfoComplete, // Use actual field check instead of DB flag
 				"created_at":        user.CreatedAt.Format(time.RFC3339),
 				"updated_at":        user.UpdatedAt.Format(time.RFC3339),
 			},
@@ -293,6 +303,14 @@ func getUserDisplayName(user *models.User) string {
 	}
 	// Fallback to email username
 	return user.Email
+}
+
+// isPersonalInfoComplete checks if user has completed required personal information
+// Required fields: first_name, last_name, phone
+func isPersonalInfoComplete(user *models.User) bool {
+	return user.FirstName != nil && *user.FirstName != "" &&
+		user.LastName != nil && *user.LastName != "" &&
+		user.Phone != nil && *user.Phone != ""
 }
 
 // writeJSONResponse writes a JSON response
