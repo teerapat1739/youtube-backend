@@ -241,6 +241,7 @@ func (s *UserProfileService) IsProfileComplete(user *models.User) bool {
 	return user.FirstName != nil && *user.FirstName != "" &&
 		user.LastName != nil && *user.LastName != "" &&
 		user.Phone != nil && *user.Phone != "" &&
+		user.NationalID != nil && *user.NationalID != "" &&
 		user.TermsAccepted && user.PDPAAccepted
 }
 
