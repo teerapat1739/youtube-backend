@@ -32,14 +32,21 @@ func HandleTestSubscription(w http.ResponseWriter, r *http.Request) {
 	log.Printf("🧪 [TEST-SUBSCRIPTION] Starting test subscription check from %s", r.RemoteAddr)
 	log.Printf("🧪 [TEST-SUBSCRIPTION] Request URL: %s", r.URL.String())
 	
-	// Extract user_id and channel_id from URL parameters
+	// Extract user_id from URL parameters (channel_id is now from env)
 	vars := mux.Vars(r)
 	userID := vars["user_id"]
-	channelID := vars["channel_id"]
 	
-	if userID == "" || channelID == "" {
-		log.Printf("❌ [TEST-SUBSCRIPTION] Missing required URL parameters")
-		sendTestErrorResponse(w, "", "", "Missing user_id or channel_id in URL parameters", http.StatusBadRequest)
+	// Get channel ID from environment variable
+	channelID := os.Getenv("TARGET_YOUTUBE_CHANNEL_ID")
+	if channelID == "" {
+		log.Printf("❌ [TEST-SUBSCRIPTION] TARGET_YOUTUBE_CHANNEL_ID not set in environment")
+		sendTestErrorResponse(w, userID, "", "Target channel ID not configured", http.StatusInternalServerError)
+		return
+	}
+	
+	if userID == "" {
+		log.Printf("❌ [TEST-SUBSCRIPTION] Missing required user_id parameter")
+		sendTestErrorResponse(w, "", channelID, "Missing user_id in URL parameters", http.StatusBadRequest)
 		return
 	}
 	
@@ -119,7 +126,7 @@ func HandleTestSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	
 	// Step 4: Use access token to check subscription
-	isSubscribed, err := checkSubscriptionWithToken(r.Context(), tokenData.AccessToken, channelID)
+	isSubscribed, err := checkSubscriptionWithToken(r.Context(), tokenData.AccessToken)
 	if err != nil {
 		log.Printf("❌ [TEST-SUBSCRIPTION] Subscription check failed: %v", err)
 		sendTestErrorResponse(w, userID, channelID, fmt.Sprintf("Subscription check failed: %v", err), http.StatusInternalServerError)
@@ -157,7 +164,14 @@ func HandleTestSubscription(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkSubscriptionWithToken checks if a user is subscribed to a channel using an access token
-func checkSubscriptionWithToken(ctx context.Context, accessToken, channelID string) (bool, error) {
+func checkSubscriptionWithToken(ctx context.Context, accessToken string) (bool, error) {
+	// Get channel ID from environment variable
+	channelID := os.Getenv("TARGET_YOUTUBE_CHANNEL_ID")
+	if channelID == "" {
+		log.Printf("❌ [TOKEN-SUBSCRIPTION] TARGET_YOUTUBE_CHANNEL_ID not set in environment")
+		return false, fmt.Errorf("target channel ID not configured")
+	}
+	
 	log.Printf("🔍 [TOKEN-SUBSCRIPTION] Checking subscription with access token for channel: %s", channelID)
 	
 	// Create OAuth2 token
@@ -176,7 +190,7 @@ func checkSubscriptionWithToken(ctx context.Context, accessToken, channelID stri
 	log.Printf("✅ [TOKEN-SUBSCRIPTION] YouTube service created successfully")
 	
 	// Check subscription using the existing function
-	isSubscribed, err := checkSubscription(youtubeService, channelID)
+	isSubscribed, err := checkSubscription(youtubeService)
 	if err != nil {
 		log.Printf("❌ [TOKEN-SUBSCRIPTION] Subscription check failed: %v", err)
 		return false, fmt.Errorf("subscription check failed: %w", err)
