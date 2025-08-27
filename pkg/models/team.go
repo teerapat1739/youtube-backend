@@ -41,54 +41,54 @@ type EnhancedActivityWithTeams struct {
 
 // GetHardcodedTeams returns the 6 hardcoded teams with fixed UUIDs
 func GetHardcodedTeams() []Team {
-	desc1 := "Team Crimson for the Ananped 8M celebration"
-	desc2 := "Team Azure for the Ananped 8M celebration"
-	desc3 := "Team Golden for the Ananped 8M celebration"
-	desc4 := "Team Emerald for the Ananped 8M celebration"
-	desc5 := "Team Purple for the Ananped 8M celebration"
-	desc6 := "Team Silver for the Ananped 8M celebration"
+	desc1 := "Team A for the Ananped 10M celebration"
+	desc2 := "Team B for the Ananped 10M celebration"
+	desc3 := "Team C for the Ananped 10M celebration"
+	desc4 := "Team D for the Ananped 10M celebration"
+	desc5 := "Team E for the Ananped 10M celebration"
+	desc6 := "Team F for the Ananped 10M celebration"
 	
 	return []Team{
 		{
 			ID:          "550e8400-e29b-41d4-a716-446655440001", // Fixed UUID for Team A
 			ActivityID:  "active", // Static activity ID
 			Name:        "A",
-			DisplayName: "Team Crimson",
+			DisplayName: "Team A",
 			Description: &desc1,
 		},
 		{
 			ID:          "550e8400-e29b-41d4-a716-446655440002", // Fixed UUID for Team B
 			ActivityID:  "active",
 			Name:        "B",
-			DisplayName: "Team Azure",
+			DisplayName: "Team B",
 			Description: &desc2,
 		},
 		{
 			ID:          "550e8400-e29b-41d4-a716-446655440003", // Fixed UUID for Team C
 			ActivityID:  "active",
 			Name:        "C",
-			DisplayName: "Team Golden",
+			DisplayName: "Team C",
 			Description: &desc3,
 		},
 		{
 			ID:          "550e8400-e29b-41d4-a716-446655440004", // Fixed UUID for Team D
 			ActivityID:  "active",
 			Name:        "D",
-			DisplayName: "Team Emerald",
+			DisplayName: "Team D",
 			Description: &desc4,
 		},
 		{
 			ID:          "550e8400-e29b-41d4-a716-446655440005", // Fixed UUID for Team E
 			ActivityID:  "active",
 			Name:        "E",
-			DisplayName: "Team Purple",
+			DisplayName: "Team E",
 			Description: &desc5,
 		},
 		{
 			ID:          "550e8400-e29b-41d4-a716-446655440006", // Fixed UUID for Team F
 			ActivityID:  "active",
 			Name:        "F",
-			DisplayName: "Team Silver",
+			DisplayName: "Team F",
 			Description: &desc6,
 		},
 	}
@@ -100,43 +100,43 @@ func GetHardcodedTeamDefinitions() []HardcodedTeam {
 		{
 			ID:           "550e8400-e29b-41d4-a716-446655440001",
 			Name:         "A",
-			DisplayName:  "Team Crimson",
-			Description:  "Team Crimson for the Ananped 8M celebration",
+			DisplayName:  "Team A",
+			Description:  "Team A for the Ananped 10M celebration",
 			DisplayOrder: 1,
 		},
 		{
 			ID:           "550e8400-e29b-41d4-a716-446655440002",
 			Name:         "B",
-			DisplayName:  "Team Azure",
-			Description:  "Team Azure for the Ananped 8M celebration",
+			DisplayName:  "Team B",
+			Description:  "Team B for the Ananped 10M celebration",
 			DisplayOrder: 2,
 		},
 		{
 			ID:           "550e8400-e29b-41d4-a716-446655440003",
 			Name:         "C",
-			DisplayName:  "Team Golden",
-			Description:  "Team Golden for the Ananped 8M celebration",
+			DisplayName:  "Team C",
+			Description:  "Team C for the Ananped 10M celebration",
 			DisplayOrder: 3,
 		},
 		{
 			ID:           "550e8400-e29b-41d4-a716-446655440004",
 			Name:         "D",
-			DisplayName:  "Team Emerald",
-			Description:  "Team Emerald for the Ananped 8M celebration",
+			DisplayName:  "Team D",
+			Description:  "Team D for the Ananped 10M celebration",
 			DisplayOrder: 4,
 		},
 		{
 			ID:           "550e8400-e29b-41d4-a716-446655440005",
 			Name:         "E",
-			DisplayName:  "Team Purple",
-			Description:  "Team Purple for the Ananped 8M celebration",
+			DisplayName:  "Team E",
+			Description:  "Team E for the Ananped 10M celebration",
 			DisplayOrder: 5,
 		},
 		{
 			ID:           "550e8400-e29b-41d4-a716-446655440006",
 			Name:         "F",
-			DisplayName:  "Team Silver",
-			Description:  "Team Silver for the Ananped 8M celebration",
+			DisplayName:  "Team F",
+			Description:  "Team F for the Ananped 10M celebration",
 			DisplayOrder: 6,
 		},
 	}

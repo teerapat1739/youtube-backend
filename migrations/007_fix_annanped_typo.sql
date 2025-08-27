@@ -21,11 +21,6 @@ WHERE
     description LIKE '%Ananped%' OR 
     display_name LIKE '%Ananped%';
 
--- Log completion
-INSERT INTO schema_migrations (version, applied_at) 
-VALUES ('007_fix_annanped_typo', NOW()) 
-ON CONFLICT (version) DO NOTHING;
-
 -- Verify changes
 SELECT 'ACTIVITIES' as table_name, id, name, title, description FROM activities WHERE title LIKE '%Ananped%' OR description LIKE '%Ananped%'
 UNION ALL
