@@ -13,8 +13,6 @@ import (
 	"time"
 
 	"github.com/gamemini/youtube/pkg/api"
-	"github.com/gamemini/youtube/pkg/auth/be"
-	"github.com/gamemini/youtube/pkg/auth/google"
 	"github.com/gamemini/youtube/pkg/config"
 	"github.com/gamemini/youtube/pkg/database"
 	"github.com/gamemini/youtube/pkg/handlers"
@@ -191,13 +189,28 @@ func setupAuthRoutes(router *mux.Router, authHandlers *handlers.AuthHandlers) {
 	router.HandleFunc("/auth/google/callback", authHandlers.HandleGoogleCallback).Methods("GET")
 	router.HandleFunc("/auth/logout", authHandlers.HandleLogout).Methods("POST", "OPTIONS")
 
-	// Backend login route
-	router.HandleFunc("/auth/be/login", be.Login).Methods("POST")
 
 	// User profile routes
 	router.HandleFunc("/api/user/profile", authHandlers.HandleGetUserProfile).Methods("GET", "OPTIONS")
+	
+	// Complete profile update endpoint - updates personal info AND requires terms/PDPA acceptance
+	// Used for: Initial profile completion after OAuth login
+	// Expects: first_name, last_name, phone, accept_terms=true, accept_pdpa=true
+	// Validates: All fields required, terms must be accepted
 	router.HandleFunc("/api/user/profile", authHandlers.HandleUpdateUserProfile).Methods("POST", "OPTIONS")
+	
+	// Initial profile verification endpoint - confirms user exists after OAuth callback
+	// Used for: Immediately after Google OAuth login to verify user record creation
+	// Expects: Only JWT token in Authorization header (no request body)
+	// Returns: Existing user data with profile_completed status
+	// Note: Does NOT create user (user already created in OAuth callback)
 	router.HandleFunc("/api/user/profile/create", authHandlers.HandleCreateInitialUserProfile).Methods("POST", "OPTIONS")
+	
+	// Personal info update endpoint - updates personal details without requiring terms re-acceptance  
+	// Used for: Updating profile info for users who already accepted terms
+	// Expects: first_name, last_name, phone (optional)
+	// Preserves: Existing terms/PDPA acceptance status
+	// Note: Separate from main profile update to avoid forcing terms re-acceptance
 	router.HandleFunc("/api/user/profile/personal-info", authHandlers.HandleUpdatePersonalInfo).Methods("POST", "OPTIONS")
 
 	// Terms and compliance routes
@@ -206,19 +219,11 @@ func setupAuthRoutes(router *mux.Router, authHandlers *handlers.AuthHandlers) {
 	router.HandleFunc("/api/activity/rules", authHandlers.HandleGetActivityRules).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/user/accept-activity-rules", authHandlers.HandleAcceptActivityRules).Methods("POST", "OPTIONS")
 
-	// Token management routes
-	router.HandleFunc("/api/user/token-status", api.HandleTokenStatus).Methods("GET", "OPTIONS")
-	router.HandleFunc("/api/user/force-reauth", api.HandleForceReauth).Methods("GET", "OPTIONS")
 
-	// Legacy routes for backward compatibility
-	router.HandleFunc("/api/users/profile", authHandlers.HandleGetUserProfile).Methods("GET", "OPTIONS")
-	router.HandleFunc("/api/users/profile", authHandlers.HandleUpdateUserProfile).Methods("PUT", "OPTIONS")
 }
 
 // setupAPIRoutes configures API routes
 func setupAPIRoutes(router *mux.Router) {
-	// Initialize handlers
-	authHandlers := handlers.NewAuthHandlers()
 
 	// Subscription and activity routes
 	router.HandleFunc("/api/check-subscription", logRequestHandler("check-subscription", api.HandleSubscriptionCheck)).Methods("GET", "OPTIONS")
@@ -227,17 +232,9 @@ func setupAPIRoutes(router *mux.Router) {
 	// Ananped specific routes
 	router.HandleFunc("/api/ananped/subscription-check", api.HandleAnanpedSubscriptionCheck).Methods("GET", "OPTIONS")
 
-	// Testing routes
-	router.HandleFunc("/api/test/subscription/{user_id}/{channel_id}", api.HandleTestSubscription).Methods("GET", "OPTIONS")
 
-	// YouTube API routes
-	router.HandleFunc("/api/user-info", authHandlers.HandleUserInfo).Methods("GET", "OPTIONS")
-	router.HandleFunc("/api/youtube-subscriptions", handleYouTubeSubscriptions).Methods("GET", "OPTIONS")
 
 	// Vote and activity routes
-	router.HandleFunc("/api/activities/{id}/counts", api.HandleGetVoteCounts).Methods("GET", "OPTIONS")
-	router.HandleFunc("/api/activities/active", handleActiveActivity).Methods("GET", "OPTIONS")
-	router.HandleFunc("/api/activities/{id}/teams", handleActivityTeams).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/activities/{id}/vote", handleSubmitVote).Methods("POST", "OPTIONS")
 	router.HandleFunc("/api/activities/{id}/vote-status", handleVoteStatus).Methods("GET", "OPTIONS")
 }
@@ -276,100 +273,8 @@ func handleHealthCheck(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(health)
 }
 
-// handleYouTubeSubscriptions handles YouTube subscriptions API
-func handleYouTubeSubscriptions(w http.ResponseWriter, r *http.Request) {
-	token := r.Header.Get("Authorization")
-	if token == "" {
-		http.Error(w, "Authorization header required", http.StatusUnauthorized)
-		return
-	}
 
-	// Remove "Bearer " prefix if present
-	if strings.HasPrefix(token, "Bearer ") {
-		token = token[7:]
-	}
 
-	subscriptions, err := google.GetYouTubeSubscriptions(token)
-	if err != nil {
-		http.Error(w, "Failed to get subscriptions: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(subscriptions)
-}
-
-// handleActiveActivity handles getting active activity with teams
-func handleActiveActivity(w http.ResponseWriter, r *http.Request) {
-	log.Printf("🎯 [API] GET /api/activities/active - Request from %s", r.RemoteAddr)
-
-	// Extract user ID for personalized response
-	_, _, userID, err := extractUserFromToken(r)
-	if err != nil {
-		log.Printf("❌ [API] Failed to extract user from token: %v", err)
-		// Use anonymous user ID for unauthenticated requests
-		userID = fmt.Sprintf("anonymous-%d", time.Now().Unix())
-	}
-
-	teamService := services.NewTeamService()
-	activityID := "active" // Use "active" as the default activity ID
-
-	activity, err := teamService.GetActivityWithTeams(r.Context(), activityID, userID)
-	if err != nil {
-		log.Printf("❌ [API] Failed to get activity with teams: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to get activity: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	log.Printf("✅ [API] Successfully retrieved activity with %d teams", len(activity.Teams))
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"data":    activity,
-	})
-}
-
-// handleActivityTeams handles getting teams for a specific activity
-func handleActivityTeams(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	activityID := vars["id"]
-	log.Printf("🏆 [API] GET /api/activities/%s/teams", activityID)
-
-	// Extract user ID for personalized response
-	_, _, userID, err := extractUserFromToken(r)
-	if err != nil {
-		log.Printf("❌ [API] Failed to extract user from token: %v", err)
-		userID = fmt.Sprintf("anonymous-%d", time.Now().Unix())
-	}
-
-	teamService := services.NewTeamService()
-	teams, err := teamService.GetTeamsWithVotes(r.Context(), activityID)
-	if err != nil {
-		log.Printf("❌ [API] Failed to get teams: %v", err)
-		http.Error(w, fmt.Sprintf("Failed to get teams: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Get user vote status
-	userVote, err := teamService.GetUserVoteStatus(r.Context(), userID, activityID)
-	if err != nil {
-		log.Printf("❌ [API] Failed to get user vote status: %v", err)
-		userVote = &models.VotingStatus{HasVoted: false}
-	}
-
-	log.Printf("✅ [API] Successfully retrieved %d teams", len(teams))
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success": true,
-		"data": map[string]interface{}{
-			"teams":       teams,
-			"activity_id": activityID,
-			"user_vote":   userVote,
-		},
-	})
-}
 
 // handleSubmitVote handles vote submission
 func handleSubmitVote(w http.ResponseWriter, r *http.Request) {

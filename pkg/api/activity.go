@@ -502,13 +502,11 @@ func checkUserSubscriptionWithOAuth(ctx context.Context, userID string) (bool, s
 	
 	log.Printf("✅ [OAUTH-SUBSCRIPTION] Subscription check completed - subscribed: %t", isSubscribed)
 	
-	// Update user's subscription status in database if verified
-	if isSubscribed {
-		err = userRepo.UpdateYouTubeSubscription(ctx, userID, true)
-		if err != nil {
-			log.Printf("⚠️ [OAUTH-SUBSCRIPTION] Failed to update subscription status in DB: %v", err)
-			// Don't fail the request, just log the warning
-		}
+	// Update user's subscription status in database
+	err = userRepo.UpdateYouTubeSubscription(ctx, userID, isSubscribed)
+	if err != nil {
+		log.Printf("⚠️ [OAUTH-SUBSCRIPTION] Failed to update subscription status in DB: %v", err)
+		// Don't fail the request, just log the warning
 	}
 	
 	return isSubscribed, "oauth", nil

@@ -48,7 +48,6 @@ func (h *EnhancedOAuthHandler) HandleLogin(w http.ResponseWriter, r *http.Reques
 		oauth2.AccessTypeOffline,
 		oauth2.SetAuthURLParam("prompt", "consent"))
 	log.Printf("🔄 Redirecting to Google OAuth: %s", url)
-
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
 

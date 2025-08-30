@@ -52,12 +52,6 @@ func (h *AuthHandlers) HandleGoogleCallback(w http.ResponseWriter, r *http.Reque
 	h.oauthHandler.HandleCallback(w, r)
 }
 
-// HandleUserInfo handles user info requests
-func (h *AuthHandlers) HandleUserInfo(w http.ResponseWriter, r *http.Request) {
-	log.Println("👤 Handling user info request")
-	h.oauthHandler.HandleUserInfo(w, r)
-}
-
 // HandleCreateInitialUserProfile handles initial user profile creation
 func (h *AuthHandlers) HandleCreateInitialUserProfile(w http.ResponseWriter, r *http.Request) {
 	log.Println("👤 Handling create initial user profile request")
