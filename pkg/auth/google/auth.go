@@ -91,7 +91,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Configure OAuth to request offline access and force consent to guarantee refresh token
-	url := config.AuthCodeURL("state", 
+	url := config.AuthCodeURL("state",
 		oauth2.AccessTypeOffline,
 		oauth2.SetAuthURLParam("prompt", "consent"),
 		oauth2.SetAuthURLParam("approval_prompt", "force"))

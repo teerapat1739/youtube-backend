@@ -21,14 +21,14 @@ import (
 
 // UserService handles user-related business logic
 type UserService struct {
-	userRepo *repository.UserRepository
+	userRepo  *repository.UserRepository
 	jwtSecret string
 }
 
 // NewUserService creates a new user service
 func NewUserService(userRepo *repository.UserRepository, jwtSecret string) *UserService {
 	return &UserService{
-		userRepo: userRepo,
+		userRepo:  userRepo,
 		jwtSecret: jwtSecret,
 	}
 }
@@ -152,7 +152,6 @@ func (s *UserService) UpdateUserProfile(ctx context.Context, userID string, upda
 		return nil, fmt.Errorf("validation failed: %w", err)
 	}
 
-
 	// Update user profile atomically
 	err := s.userRepo.UpdateUserProfileAtomic(ctx, userID, updates)
 	if err != nil {
@@ -187,7 +186,6 @@ func (s *UserService) UpdateUserProfilePersonalInfoOnly(ctx context.Context, use
 	if updates.Phone != "" && len(updates.Phone) != 10 {
 		return nil, fmt.Errorf("phone number must be 10 digits")
 	}
-
 
 	// Update only personal information fields
 	err := s.userRepo.UpdateUserPersonalInfoOnly(ctx, userID, updates.FirstName, updates.LastName, updates.Phone)
@@ -225,7 +223,7 @@ func (s *UserService) AcceptTerms(ctx context.Context, userID, termsVersion, pdp
 		PDPAVersion:  pdpaVersion,
 		AcceptedAt:   time.Now(),
 	}
-	
+
 	if ipAddress != "" {
 		acceptance.IPAddress = &ipAddress
 	}
@@ -258,7 +256,7 @@ func (s *UserService) GenerateAccessToken(user *models.User) (string, time.Time,
 		"nbf":       now.Unix(), // Not before - prevents token use before issued
 		"iss":       "youtube-activity-platform",
 		"aud":       "youtube-activity-frontend", // Audience - specific to our frontend
-		"sub":       user.ID, // Subject - standard JWT claim for user identity
+		"sub":       user.ID,                     // Subject - standard JWT claim for user identity
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -396,19 +394,19 @@ func (s *UserService) GetUserProfileWithVoteStatus(ctx context.Context, userID s
 // CleanupExpiredSessions removes expired user sessions and returns count deleted
 func (s *UserService) CleanupExpiredSessions(ctx context.Context) (int64, error) {
 	log.Println("🧹 Cleaning up expired sessions...")
-	
+
 	deletedCount, err := s.userRepo.CleanExpiredSessions(ctx)
 	if err != nil {
 		log.Printf("❌ Failed to cleanup expired sessions: %v", err)
 		return 0, fmt.Errorf("failed to cleanup expired sessions: %w", err)
 	}
-	
+
 	if deletedCount > 0 {
 		log.Printf("✅ Cleaned up %d expired sessions", deletedCount)
 	} else {
 		log.Println("✅ No expired sessions to clean up")
 	}
-	
+
 	return deletedCount, nil
 }
 
@@ -417,9 +415,9 @@ func (s *UserService) StartSessionCleanupScheduler(ctx context.Context, interval
 	if interval <= 0 {
 		interval = 1 * time.Hour // Default to 1 hour if invalid interval
 	}
-	
+
 	log.Printf("🚀 Starting session cleanup scheduler (interval: %v)", interval)
-	
+
 	// Initial cleanup on startup
 	go func() {
 		if count, err := s.CleanupExpiredSessions(ctx); err != nil {
@@ -428,7 +426,7 @@ func (s *UserService) StartSessionCleanupScheduler(ctx context.Context, interval
 			log.Printf("🧹 Initial cleanup removed %d expired sessions", count)
 		}
 	}()
-	
+
 	// Periodic cleanup
 	ticker := time.NewTicker(interval)
 	go func() {
@@ -452,28 +450,28 @@ func (s *UserService) StartSessionCleanupScheduler(ctx context.Context, interval
 // GetUserOAuthTokens retrieves stored OAuth tokens for a user
 func (s *UserService) GetUserOAuthTokens(ctx context.Context, userID string) (*models.OAuthTokenData, error) {
 	log.Printf("🔑 Getting OAuth tokens for user - UserID: %s", userID)
-	
+
 	user, err := s.userRepo.GetUserByID(ctx, userID)
 	if err != nil {
 		log.Printf("❌ Failed to get user: %v", err)
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
-	
+
 	if user.GoogleAccessToken == nil || user.GoogleRefreshToken == nil {
 		log.Printf("❌ No OAuth tokens stored for user - UserID: %s", userID)
 		return nil, fmt.Errorf("no OAuth tokens stored for user")
 	}
-	
+
 	tokenData := &models.OAuthTokenData{
 		AccessToken:  *user.GoogleAccessToken,
 		RefreshToken: *user.GoogleRefreshToken,
 		TokenType:    "Bearer",
 	}
-	
+
 	if user.GoogleTokenExpiry != nil {
 		tokenData.Expiry = *user.GoogleTokenExpiry
 	}
-	
+
 	log.Printf("✅ OAuth tokens retrieved for user - UserID: %s", userID)
 	return tokenData, nil
 }
@@ -481,19 +479,19 @@ func (s *UserService) GetUserOAuthTokens(ctx context.Context, userID string) (*m
 // RefreshUserOAuthToken refreshes OAuth tokens for a user using Google's OAuth2 refresh endpoint
 func (s *UserService) RefreshUserOAuthToken(ctx context.Context, userID string) (*models.OAuthTokenData, error) {
 	log.Printf("🔄 Refreshing OAuth token for user - UserID: %s", userID)
-	
+
 	// Get current tokens
 	tokenData, err := s.GetUserOAuthTokens(ctx, userID)
 	if err != nil {
 		log.Printf("❌ Failed to get current tokens: %v", err)
 		return nil, fmt.Errorf("failed to get current tokens: %w", err)
 	}
-	
+
 	if tokenData.RefreshToken == "" {
 		log.Printf("❌ No refresh token available for user - UserID: %s", userID)
 		return nil, fmt.Errorf("no refresh token available for user")
 	}
-	
+
 	// Import the Google OAuth config here to avoid circular imports
 	// Use similar approach as in google/auth.go
 	refreshedTokenData, err := s.refreshTokenWithGoogle(ctx, tokenData.RefreshToken)
@@ -501,19 +499,19 @@ func (s *UserService) RefreshUserOAuthToken(ctx context.Context, userID string) 
 		log.Printf("❌ Failed to refresh token with Google: %v", err)
 		return nil, fmt.Errorf("failed to refresh token with Google: %w", err)
 	}
-	
+
 	// Keep the original refresh token since Google doesn't always provide a new one
 	if refreshedTokenData.RefreshToken == "" {
 		refreshedTokenData.RefreshToken = tokenData.RefreshToken
 	}
-	
+
 	// Update stored tokens
 	err = s.userRepo.UpdateUserOAuthTokens(ctx, userID, refreshedTokenData)
 	if err != nil {
 		log.Printf("❌ Failed to update OAuth tokens: %v", err)
 		return nil, fmt.Errorf("failed to update OAuth tokens: %w", err)
 	}
-	
+
 	log.Printf("✅ OAuth token refreshed for user - UserID: %s", userID)
 	return refreshedTokenData, nil
 }
@@ -521,58 +519,58 @@ func (s *UserService) RefreshUserOAuthToken(ctx context.Context, userID string) 
 // refreshTokenWithGoogle calls Google's token refresh endpoint
 func (s *UserService) refreshTokenWithGoogle(ctx context.Context, refreshToken string) (*models.OAuthTokenData, error) {
 	log.Printf("🔄 Calling Google token refresh endpoint")
-	
+
 	// Get OAuth configuration
 	appConfig := config.GetConfig()
 	clientID := appConfig.OAuthConfig.ClientID
 	clientSecret := appConfig.OAuthConfig.ClientSecret
-	
+
 	if clientID == "" || clientSecret == "" {
 		return nil, fmt.Errorf("missing Google OAuth credentials")
 	}
-	
+
 	// Prepare token refresh request
 	data := url.Values{}
 	data.Set("client_id", clientID)
 	data.Set("client_secret", clientSecret)
 	data.Set("refresh_token", refreshToken)
 	data.Set("grant_type", "refresh_token")
-	
+
 	// Make HTTP request to Google's token endpoint
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://oauth2.googleapis.com/token", strings.NewReader(data.Encode()))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create refresh request: %w", err)
 	}
-	
+
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	
+
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 	}
-	
+
 	log.Printf("🌐 Making token refresh request to Google")
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to refresh token with Google: %w", err)
 	}
 	defer resp.Body.Close()
-	
+
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read refresh response: %w", err)
 	}
-	
+
 	// Check for HTTP errors
 	if resp.StatusCode != http.StatusOK {
 		log.Printf("❌ Google token refresh failed with status %d: %s", resp.StatusCode, string(body))
-		
+
 		// Parse error response for better error messages
 		var errorResp struct {
 			Error            string `json:"error"`
 			ErrorDescription string `json:"error_description"`
 		}
-		
+
 		if json.Unmarshal(body, &errorResp) == nil && errorResp.Error != "" {
 			switch errorResp.Error {
 			case "invalid_grant":
@@ -583,10 +581,10 @@ func (s *UserService) refreshTokenWithGoogle(ctx context.Context, refreshToken s
 				return nil, fmt.Errorf("token refresh failed: %s - %s", errorResp.Error, errorResp.ErrorDescription)
 			}
 		}
-		
+
 		return nil, fmt.Errorf("token refresh failed with status %d", resp.StatusCode)
 	}
-	
+
 	// Parse successful response
 	var tokenResp struct {
 		AccessToken  string `json:"access_token"`
@@ -595,26 +593,26 @@ func (s *UserService) refreshTokenWithGoogle(ctx context.Context, refreshToken s
 		ExpiresIn    int    `json:"expires_in"`
 		Scope        string `json:"scope,omitempty"`
 	}
-	
+
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		return nil, fmt.Errorf("failed to parse token response: %w", err)
 	}
-	
+
 	// Validate required fields
 	if tokenResp.AccessToken == "" {
 		return nil, fmt.Errorf("no access token in refresh response")
 	}
-	
+
 	// Calculate expiry time
 	newExpiry := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
-	
+
 	// Use new refresh token if provided, otherwise keep the original
 	newRefreshToken := refreshToken
 	if tokenResp.RefreshToken != "" {
 		newRefreshToken = tokenResp.RefreshToken
 		log.Printf("🔄 Google provided new refresh token")
 	}
-	
+
 	// Create refreshed token data
 	refreshedData := &models.OAuthTokenData{
 		AccessToken:  tokenResp.AccessToken,
@@ -622,7 +620,7 @@ func (s *UserService) refreshTokenWithGoogle(ctx context.Context, refreshToken s
 		Expiry:       newExpiry,
 		TokenType:    tokenResp.TokenType,
 	}
-	
+
 	log.Printf("✅ Token refreshed successfully with Google - Expires: %s", newExpiry.Format(time.RFC3339))
 	return refreshedData, nil
 }
@@ -633,13 +631,13 @@ func (s *UserService) IsOAuthTokenExpired(ctx context.Context, userID string) (b
 	if err != nil {
 		return true, fmt.Errorf("failed to get user: %w", err)
 	}
-	
+
 	if user.GoogleTokenExpiry == nil {
 		return true, nil // No expiry means expired
 	}
-	
+
 	// Token is expired if expiry time is before now (with 5 minute buffer)
-	return user.GoogleTokenExpiry.Before(time.Now().Add(5*time.Minute)), nil
+	return user.GoogleTokenExpiry.Before(time.Now().Add(5 * time.Minute)), nil
 }
 
 // AcceptActivityRules handles activity rules acceptance for a user

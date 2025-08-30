@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gamemini/youtube/pkg/config"
+	"github.com/gamemini/youtube/pkg/container"
 	"github.com/gamemini/youtube/pkg/models"
 	"github.com/gamemini/youtube/pkg/repository"
 	"github.com/gamemini/youtube/pkg/services"
@@ -33,7 +34,7 @@ func HandleSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
 	log.Printf("🔍 [SUBSCRIPTION-CHECK] Request URL: %s", r.URL.String())
 	log.Printf("🔍 [SUBSCRIPTION-CHECK] Request method: %s", r.Method)
 	log.Printf("🔍 [SUBSCRIPTION-CHECK] Request headers: %+v", r.Header)
-	
+
 	// Extract and validate JWT token to get user ID
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
@@ -43,14 +44,14 @@ func HandleSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("🔑 [SUBSCRIPTION-CHECK] Auth header found, length: %d", len(authHeader))
-	
+
 	// Extract the JWT token value (remove "Bearer " prefix if it exists)
 	tokenValue := authHeader
 	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
 		tokenValue = authHeader[7:]
 		log.Printf("🔑 [SUBSCRIPTION-CHECK] Bearer JWT token extracted, length: %d", len(tokenValue))
 	}
-	
+
 	// Get user ID from JWT token
 	userID, err := extractUserIDFromJWT(tokenValue)
 	if err != nil {
@@ -58,12 +59,13 @@ func HandleSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
 		sendErrorResponse(w, "Invalid authorization token", http.StatusUnauthorized)
 		return
 	}
-	
+
 	log.Printf("🔑 [SUBSCRIPTION-CHECK] User ID extracted from JWT: %s", userID)
 
 	// Get target channel ID from request query parameters
 	log.Printf("🎯 [SUBSCRIPTION-CHECK] Checking subscription for user %s", userID)
 
+	// Legacy function - use HandleSubscriptionCheckWithContainer for new implementations
 	// Check subscription using OAuth tokens from database
 	isSubscribed, verificationMethod, err := checkUserSubscriptionWithOAuth(r.Context(), userID)
 	if err != nil {
@@ -79,7 +81,7 @@ func HandleSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
 	// Create response with detailed information
 	// Get channel ID from environment for response
 	channelID := config.GetConfig().TargetChannelID
-	
+
 	response := ActivityResponse{
 		Success: true,
 		Message: "Subscription check completed",
@@ -94,6 +96,73 @@ func HandleSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 	log.Printf("📤 [SUBSCRIPTION-CHECK] Response sent successfully")
+}
+
+// HandleSubscriptionCheckWithContainer verifies if a user is subscribed using dependency injection
+func HandleSubscriptionCheckWithContainer(w http.ResponseWriter, r *http.Request, appContainer *container.AppContainer) {
+	log.Printf("🔍 [SUBSCRIPTION-CHECK-CONTAINER] Starting subscription check request from %s", r.RemoteAddr)
+	log.Printf("🔍 [SUBSCRIPTION-CHECK-CONTAINER] Request URL: %s", r.URL.String())
+	log.Printf("🔍 [SUBSCRIPTION-CHECK-CONTAINER] Request method: %s", r.Method)
+
+	// Extract and validate JWT token to get user ID
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		log.Printf("❌ [SUBSCRIPTION-CHECK-CONTAINER] No authorization header found")
+		sendErrorResponse(w, "Authorization token required", http.StatusUnauthorized)
+		return
+	}
+
+	log.Printf("🔑 [SUBSCRIPTION-CHECK-CONTAINER] Auth header found, length: %d", len(authHeader))
+
+	// Extract the JWT token value (remove "Bearer " prefix if it exists)
+	tokenValue := authHeader
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		tokenValue = authHeader[7:]
+		log.Printf("🔑 [SUBSCRIPTION-CHECK-CONTAINER] Bearer JWT token extracted, length: %d", len(tokenValue))
+	}
+
+	// Get user ID from JWT token
+	userID, err := extractUserIDFromJWT(tokenValue)
+	if err != nil {
+		log.Printf("❌ [SUBSCRIPTION-CHECK-CONTAINER] Failed to extract user ID from JWT: %v", err)
+		sendErrorResponse(w, "Invalid authorization token", http.StatusUnauthorized)
+		return
+	}
+
+	log.Printf("🔑 [SUBSCRIPTION-CHECK-CONTAINER] User ID extracted from JWT: %s", userID)
+	log.Printf("🎯 [SUBSCRIPTION-CHECK-CONTAINER] Checking subscription for user %s", userID)
+
+	// Use YouTubeService from container for subscription check
+	youtubeService := appContainer.GetYouTubeService()
+	isSubscribed, verificationMethod, err := youtubeService.CheckUserSubscriptionWithOAuth(r.Context(), userID)
+	if err != nil {
+		log.Printf("❌ [SUBSCRIPTION-CHECK-CONTAINER] Subscription check failed: %v", err)
+		errMsg, statusCode := handleYouTubeAPIError(err)
+		log.Printf("❌ [SUBSCRIPTION-CHECK-CONTAINER] Returning error: %s (status: %d)", errMsg, statusCode)
+		sendErrorResponse(w, errMsg, statusCode)
+		return
+	}
+
+	log.Printf("✅ [SUBSCRIPTION-CHECK-CONTAINER] Subscription check completed - subscribed: %t, method: %s", isSubscribed, verificationMethod)
+
+	// Create response with detailed information
+	// Get channel ID from environment for response
+	channelID := config.GetConfig().TargetChannelID
+
+	response := ActivityResponse{
+		Success: true,
+		Message: "Subscription check completed",
+		Data: map[string]interface{}{
+			"is_subscribed":       isSubscribed,
+			"channel_id":          channelID,
+			"user_id":             userID,
+			"verification_method": verificationMethod,
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+	log.Printf("📤 [SUBSCRIPTION-CHECK-CONTAINER] Response sent successfully")
 }
 
 // HandleJoinActivity handles a user joining an activity and submitting their contact information
@@ -287,7 +356,7 @@ func createYouTubeService(ctx context.Context, token *oauth2.Token) (*youtube.Se
 	log.Printf("🔗 [YOUTUBE-SERVICE] Token has access token: %t", token.AccessToken != "")
 	log.Printf("🔗 [YOUTUBE-SERVICE] Token expiry: %v", token.Expiry)
 	log.Printf("🔗 [YOUTUBE-SERVICE] Token type: %s", token.TokenType)
-	
+
 	// In a real application, you would use the OAuth2 config from your Google auth package
 	// For simplicity, we're just using the token directly
 	service, err := youtube.NewService(ctx, option.WithTokenSource(oauth2.StaticTokenSource(token)))
@@ -295,7 +364,7 @@ func createYouTubeService(ctx context.Context, token *oauth2.Token) (*youtube.Se
 		log.Printf("❌ [YOUTUBE-SERVICE] Failed to create service: %v", err)
 		return nil, err
 	}
-	
+
 	log.Printf("✅ [YOUTUBE-SERVICE] YouTube service created successfully")
 	return service, nil
 }
@@ -304,18 +373,18 @@ func createYouTubeService(ctx context.Context, token *oauth2.Token) (*youtube.Se
 func createYouTubeServiceWithAPIKey(ctx context.Context, apiKey string) (*youtube.Service, error) {
 	log.Printf("🔗 [YOUTUBE-SERVICE-API] Creating YouTube service with API key...")
 	log.Printf("🔗 [YOUTUBE-SERVICE-API] API key length: %d", len(apiKey))
-	
+
 	if apiKey == "" {
 		return nil, fmt.Errorf("API key is required")
 	}
-	
+
 	// Create YouTube service with API key
 	service, err := youtube.NewService(ctx, option.WithAPIKey(apiKey))
 	if err != nil {
 		log.Printf("❌ [YOUTUBE-SERVICE-API] Failed to create service: %v", err)
 		return nil, fmt.Errorf("failed to create YouTube service: %w", err)
 	}
-	
+
 	log.Printf("✅ [YOUTUBE-SERVICE-API] YouTube service created successfully with API key")
 	return service, nil
 }
@@ -328,9 +397,9 @@ func checkSubscription(service *youtube.Service) (bool, error) {
 		log.Printf("❌ [CHECK-SUBSCRIPTION] TARGET_YOUTUBE_CHANNEL_ID not set in environment")
 		return false, fmt.Errorf("target channel ID not configured")
 	}
-	
+
 	log.Printf("🔍 [CHECK-SUBSCRIPTION] Starting subscription check for channel: %s", channelID)
-	
+
 	// Call the YouTube API to check subscriptions using the subscriptions.list API
 	// Reference: https://developers.google.com/youtube/v3/docs/subscriptions/list
 
@@ -350,7 +419,7 @@ func checkSubscription(service *youtube.Service) (bool, error) {
 
 	log.Printf("✅ [CHECK-SUBSCRIPTION] YouTube API call successful")
 	log.Printf("📊 [CHECK-SUBSCRIPTION] Response items count: %d", len(response.Items))
-	
+
 	if len(response.Items) > 0 {
 		log.Printf("🎯 [CHECK-SUBSCRIPTION] User is subscribed to channel %s", channelID)
 		for i, item := range response.Items {
@@ -404,13 +473,13 @@ func getUserInfo(service *youtube.Service) (map[string]interface{}, error) {
 // extractUserIDFromJWT extracts the user ID from a JWT token
 func extractUserIDFromJWT(tokenString string) (string, error) {
 	log.Printf("🔑 [JWT-EXTRACT] Extracting user ID from JWT token")
-	
+
 	// Get JWT secret from environment
 	jwtSecret := config.GetConfig().JWTSecret
 	if jwtSecret == "" {
 		return "", fmt.Errorf("JWT_SECRET not configured")
 	}
-	
+
 	// Parse and validate JWT token
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		// Validate signing method
@@ -419,29 +488,29 @@ func extractUserIDFromJWT(tokenString string) (string, error) {
 		}
 		return []byte(jwtSecret), nil
 	})
-	
+
 	if err != nil {
 		log.Printf("❌ [JWT-EXTRACT] JWT verification failed: %v", err)
 		return "", fmt.Errorf("invalid JWT token: %v", err)
 	}
-	
+
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
 		userID := fmt.Sprintf("%v", claims["user_id"])
 		if userID == "" {
 			return "", fmt.Errorf("invalid token: missing user_id claim")
 		}
-		
+
 		log.Printf("✅ [JWT-EXTRACT] User ID extracted successfully: %s", userID)
 		return userID, nil
 	}
-	
+
 	return "", fmt.Errorf("invalid token claims")
 }
 
 // checkUserSubscriptionWithOAuth checks if a user is subscribed using OAuth tokens from database
 func checkUserSubscriptionWithOAuth(ctx context.Context, userID string) (bool, string, error) {
 	log.Printf("🔍 [OAUTH-SUBSCRIPTION] Starting OAuth-based subscription check for user %s", userID)
-	
+
 	// Initialize services
 	userRepo := repository.NewUserRepository()
 	jwtSecret := config.GetConfig().JWTSecret
@@ -449,14 +518,14 @@ func checkUserSubscriptionWithOAuth(ctx context.Context, userID string) (bool, s
 		jwtSecret = "default-development-secret-change-in-production"
 	}
 	userService := services.NewUserService(userRepo, jwtSecret)
-	
+
 	// Check if OAuth token is expired and refresh if needed
 	isExpired, err := userService.IsOAuthTokenExpired(ctx, userID)
 	if err != nil {
 		log.Printf("❌ [OAUTH-SUBSCRIPTION] Failed to check token expiry: %v", err)
 		return false, "error", fmt.Errorf("failed to check token expiry: %w", err)
 	}
-	
+
 	var tokenData *models.OAuthTokenData
 	if isExpired {
 		log.Printf("🔄 [OAUTH-SUBSCRIPTION] OAuth token expired, attempting refresh")
@@ -475,7 +544,7 @@ func checkUserSubscriptionWithOAuth(ctx context.Context, userID string) (bool, s
 		}
 		log.Printf("✅ [OAUTH-SUBSCRIPTION] OAuth tokens retrieved successfully")
 	}
-	
+
 	// Create OAuth2 token for YouTube API
 	token := &oauth2.Token{
 		AccessToken:  tokenData.AccessToken,
@@ -483,31 +552,31 @@ func checkUserSubscriptionWithOAuth(ctx context.Context, userID string) (bool, s
 		Expiry:       tokenData.Expiry,
 		TokenType:    tokenData.TokenType,
 	}
-	
+
 	// Create YouTube service with OAuth token
 	youtubeService, err := createYouTubeService(ctx, token)
 	if err != nil {
 		log.Printf("❌ [OAUTH-SUBSCRIPTION] Failed to create YouTube service: %v", err)
 		return false, "service_creation_failed", fmt.Errorf("failed to create YouTube service: %w", err)
 	}
-	
+
 	log.Printf("✅ [OAUTH-SUBSCRIPTION] YouTube service created successfully")
-	
+
 	// Check subscription using the authenticated YouTube API
 	isSubscribed, err := checkSubscription(youtubeService)
 	if err != nil {
 		log.Printf("❌ [OAUTH-SUBSCRIPTION] Subscription check failed: %v", err)
 		return false, "api_call_failed", fmt.Errorf("subscription check failed: %w", err)
 	}
-	
+
 	log.Printf("✅ [OAUTH-SUBSCRIPTION] Subscription check completed - subscribed: %t", isSubscribed)
-	
+
 	// Update user's subscription status in database
 	err = userRepo.UpdateYouTubeSubscription(ctx, userID, isSubscribed)
 	if err != nil {
 		log.Printf("⚠️ [OAUTH-SUBSCRIPTION] Failed to update subscription status in DB: %v", err)
 		// Don't fail the request, just log the warning
 	}
-	
+
 	return isSubscribed, "oauth", nil
 }

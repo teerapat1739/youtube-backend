@@ -29,9 +29,9 @@ func (s *VoteCountService) GetCounts(ctx context.Context, activityID string) (ma
 	if activityID == "" {
 		activityID = "active"
 	}
-	
+
 	key := fmt.Sprintf("vote_counts:%s", activityID)
-	
+
 	// Try Redis first if available
 	if cachedData, err := cache.HGetAll(ctx, key); err == nil && len(cachedData) > 0 {
 		counts := make(map[string]int64, len(cachedData))
@@ -42,24 +42,24 @@ func (s *VoteCountService) GetCounts(ctx context.Context, activityID string) (ma
 		}
 		return counts, "redis", nil
 	}
-	
+
 	// Cache miss - fetch from database
 	counts, err := s.voteRepo.GetCountsByActivity(ctx, activityID)
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to get vote counts from database: %w", err)
 	}
-	
+
 	// Cache the result with jittered TTL (fire-and-forget)
 	go func() {
 		// Create jittered TTL (9-11 seconds) to prevent thundering herd
 		jitter := time.Duration(rand.Intn(3)) * time.Second
 		ttl := 9*time.Second + jitter
-		
+
 		if err := cache.HSetAllWithTTL(context.Background(), key, counts, ttl); err != nil {
 			log.Printf("⚠️ Failed to cache vote counts: %v", err)
 		}
 	}()
-	
+
 	return counts, "db", nil
 }
 
@@ -70,12 +70,12 @@ func (s *VoteCountService) Increment(ctx context.Context, activityID, teamID str
 	if activityID == "" {
 		activityID = "active"
 	}
-	
+
 	key := fmt.Sprintf("vote_counts:%s", activityID)
-	
+
 	// Best-effort increment in cache
 	_ = cache.HIncrBy(ctx, key, teamID, 1) // ignore errors for best-effort
-	
+
 	return nil
 }
 

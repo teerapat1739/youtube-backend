@@ -47,7 +47,7 @@ func initRedisClient() (*redis.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse REDIS_URL: %w", err)
 	}
-	
+
 	// Set reasonable defaults for cloud Redis
 	opt.MaxRetries = 3
 	opt.MinRetryBackoff = 100 * time.Millisecond
@@ -60,16 +60,16 @@ func initRedisClient() (*redis.Client, error) {
 	opt.MaxIdleConns = 5
 	opt.ConnMaxIdleTime = 10 * time.Minute
 	opt.ConnMaxLifetime = 60 * time.Minute
-	
+
 	client := redis.NewClient(opt)
-	
+
 	// Test connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
-	
+
 	if debugMode {
 		log.Printf("[REDIS] Connected to Redis Cloud via REDIS_URL")
 	}
@@ -82,7 +82,7 @@ func HGetAll(ctx context.Context, key string) (map[string]string, error) {
 	if client == nil {
 		return nil, fmt.Errorf("redis client not available")
 	}
-	
+
 	result, err := client.HGetAll(ctx, key).Result()
 	if err != nil {
 		return nil, fmt.Errorf("redis HGetAll failed: %w", err)
@@ -95,18 +95,18 @@ func HSetAll(ctx context.Context, key string, values map[string]int64) error {
 	if len(values) == 0 {
 		return nil
 	}
-	
+
 	client := GetRedis()
 	if client == nil {
 		return fmt.Errorf("redis client not available")
 	}
-	
+
 	// Convert int64 values to interface{} for Redis
 	data := make(map[string]interface{}, len(values))
 	for k, v := range values {
 		data[k] = v
 	}
-	
+
 	err := client.HSet(ctx, key, data).Err()
 	if err != nil {
 		return fmt.Errorf("redis HSet failed: %w", err)
@@ -120,7 +120,7 @@ func HIncrBy(ctx context.Context, key, field string, by int64) error {
 	if client == nil {
 		return fmt.Errorf("redis client not available")
 	}
-	
+
 	err := client.HIncrBy(ctx, key, field, by).Err()
 	if err != nil {
 		return fmt.Errorf("redis HIncrBy failed: %w", err)
@@ -133,23 +133,23 @@ func HSetAllWithTTL(ctx context.Context, key string, values map[string]int64, tt
 	if len(values) == 0 {
 		return nil
 	}
-	
+
 	client := GetRedis()
 	if client == nil {
 		return fmt.Errorf("redis client not available")
 	}
-	
+
 	// Convert int64 values to interface{} for Redis
 	data := make(map[string]interface{}, len(values))
 	for k, v := range values {
 		data[k] = v
 	}
-	
+
 	// Use pipeline for atomic operation
 	pipe := client.Pipeline()
 	pipe.HSet(ctx, key, data)
 	pipe.Expire(ctx, key, ttl)
-	
+
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("redis pipeline failed: %w", err)
@@ -163,7 +163,7 @@ func Del(ctx context.Context, key string) error {
 	if client == nil {
 		return fmt.Errorf("redis client not available")
 	}
-	
+
 	err := client.Del(ctx, key).Err()
 	if err != nil {
 		return fmt.Errorf("redis Del failed: %w", err)

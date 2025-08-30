@@ -20,12 +20,12 @@ type User struct {
 	YouTubeSubscribed      bool       `json:"youtube_subscribed" db:"youtube_subscribed"`
 	SubscriptionVerifiedAt *time.Time `json:"subscription_verified_at,omitempty" db:"subscription_verified_at"`
 	// OAuth token fields for YouTube API access
-	GoogleAccessToken      *string    `json:"-" db:"google_access_token"`       // Hidden from JSON for security
-	GoogleRefreshToken     *string    `json:"-" db:"google_refresh_token"`      // Hidden from JSON for security
-	GoogleTokenExpiry      *time.Time `json:"-" db:"google_token_expiry"`       // Hidden from JSON for security
-	YouTubeChannelID       *string    `json:"youtube_channel_id,omitempty" db:"youtube_channel_id"` // User's YouTube channel ID
-	CreatedAt              time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt              time.Time  `json:"updated_at" db:"updated_at"`
+	GoogleAccessToken  *string    `json:"-" db:"google_access_token"`                           // Hidden from JSON for security
+	GoogleRefreshToken *string    `json:"-" db:"google_refresh_token"`                          // Hidden from JSON for security
+	GoogleTokenExpiry  *time.Time `json:"-" db:"google_token_expiry"`                           // Hidden from JSON for security
+	YouTubeChannelID   *string    `json:"youtube_channel_id,omitempty" db:"youtube_channel_id"` // User's YouTube channel ID
+	CreatedAt          time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 // Team represents a team in an activity
@@ -196,10 +196,10 @@ type YouTubeSubscriptionCheckRequest struct {
 
 // YouTubeSubscriptionCheckResponse represents a subscription check response
 type YouTubeSubscriptionCheckResponse struct {
-	IsSubscribed    bool   `json:"is_subscribed"`
-	ChannelID       string `json:"channel_id"`
-	UserChannelID   string `json:"user_channel_id,omitempty"`
-	SubscriptionID  string `json:"subscription_id,omitempty"`
+	IsSubscribed       bool   `json:"is_subscribed"`
+	ChannelID          string `json:"channel_id"`
+	UserChannelID      string `json:"user_channel_id,omitempty"`
+	SubscriptionID     string `json:"subscription_id,omitempty"`
 	VerificationMethod string `json:"verification_method"` // "oauth", "api_key", "fallback"
 }
 

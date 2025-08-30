@@ -10,6 +10,7 @@ import (
 
 	"github.com/gamemini/youtube/pkg/auth/google"
 	"github.com/gamemini/youtube/pkg/config"
+	"github.com/gamemini/youtube/pkg/interfaces"
 	"github.com/gamemini/youtube/pkg/models"
 	"github.com/gamemini/youtube/pkg/repository"
 	"github.com/gamemini/youtube/pkg/services"
@@ -17,11 +18,12 @@ import (
 
 // AuthHandlers contains all authentication-related handlers
 type AuthHandlers struct {
-	userService    *services.UserService
-	oauthHandler   *google.EnhancedOAuthHandler
+	userService  *services.UserService
+	oauthHandler *google.EnhancedOAuthHandler
+	container    interfaces.Container // Using interface to avoid circular dependency
 }
 
-// NewAuthHandlers creates new authentication handlers
+// NewAuthHandlers creates new authentication handlers (deprecated - use NewAuthHandlersWithContainer)
 func NewAuthHandlers() *AuthHandlers {
 	appConfig := config.GetConfig()
 	jwtSecret := appConfig.JWTSecret
@@ -37,6 +39,24 @@ func NewAuthHandlers() *AuthHandlers {
 	return &AuthHandlers{
 		userService:  userService,
 		oauthHandler: oauthHandler,
+	}
+}
+
+// NewAuthHandlersWithContainer creates new authentication handlers with dependency injection
+func NewAuthHandlersWithContainer(container interfaces.Container) *AuthHandlers {
+	appConfig := config.GetConfig()
+	jwtSecret := appConfig.JWTSecret
+	if jwtSecret == "" {
+		jwtSecret = "default-development-secret-change-in-production"
+		log.Println("⚠️  Using default JWT secret - set JWT_SECRET environment variable in production")
+	}
+
+	oauthHandler := google.NewEnhancedOAuthHandler(jwtSecret)
+
+	return &AuthHandlers{
+		userService:  container.GetUserService(),
+		oauthHandler: oauthHandler,
+		container:    container,
 	}
 }
 
@@ -316,14 +336,14 @@ func (h *AuthHandlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		log.Printf("⚠️ Logout called with invalid/expired token: %v", err)
 	} else {
 		log.Printf("👤 Logging out user: %s", user.ID)
-		
+
 		// Note: With JWT tokens, we can't truly invalidate them server-side without a blacklist
 		// The frontend will remove the token from localStorage, effectively logging out the user
 		// In a production system, you might want to:
 		// 1. Maintain a blacklist of invalidated tokens (with expiry)
 		// 2. Use shorter-lived access tokens with refresh tokens
 		// 3. Store session tokens in database for server-side invalidation
-		
+
 		// For now, we'll just log the logout event for audit purposes
 		// You could add audit logging to database here if needed
 		log.Printf("✅ User %s logged out successfully", user.ID)
@@ -336,8 +356,8 @@ func (h *AuthHandlers) HandleLogout(w http.ResponseWriter, r *http.Request) {
 
 	// Return success response
 	response := map[string]interface{}{
-		"success": true,
-		"message": "Successfully logged out",
+		"success":   true,
+		"message":   "Successfully logged out",
 		"timestamp": fmt.Sprintf("%d", time.Now().Unix()),
 	}
 
@@ -451,7 +471,7 @@ func (h *AuthHandlers) HandleAcceptActivityRules(w http.ResponseWriter, r *http.
 // writeJSONResponse writes a JSON response
 func (h *AuthHandlers) writeJSONResponse(w http.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
-	
+
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		log.Printf("❌ Failed to encode JSON response: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)

@@ -124,7 +124,6 @@ func (r *UserRepository) GetUserByID(ctx context.Context, userID string) (*model
 	return &user, nil
 }
 
-
 // UpdateUser updates a user
 func (r *UserRepository) UpdateUser(ctx context.Context, userID string, updates *models.UpdateUserProfileRequest) error {
 	query := "UPDATE users SET "
@@ -448,14 +447,14 @@ func (r *UserRepository) UpdateUserProfileAtomic(ctx context.Context, userID str
 // UpdateUserPersonalInfoOnly updates only personal information fields without changing other user data
 func (r *UserRepository) UpdateUserPersonalInfoOnly(ctx context.Context, userID, firstName, lastName, phone string) error {
 	log.Printf("📝 Updating personal info only - UserID: %s", userID)
-	
+
 	// Begin transaction for atomic update
 	tx, err := database.GetDB().Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	
+
 	// Update personal information fields and set profile_completed based on required fields
 	// Profile is considered complete when first_name, last_name, and phone are provided
 	// Use separate parameters for the profile_completed calculation to avoid type conflicts
@@ -472,7 +471,7 @@ func (r *UserRepository) UpdateUserPersonalInfoOnly(ctx context.Context, userID,
 			updated_at = NOW()
 		WHERE id = $1
 	`
-	
+
 	result, err := tx.Exec(ctx, query,
 		userID,
 		firstName,
@@ -486,18 +485,18 @@ func (r *UserRepository) UpdateUserPersonalInfoOnly(ctx context.Context, userID,
 		log.Printf("❌ Failed to update personal info: %v", err)
 		return fmt.Errorf("failed to update personal info: %w", err)
 	}
-	
+
 	rowsAffected := result.RowsAffected()
 	if rowsAffected == 0 {
 		return fmt.Errorf("user not found")
 	}
-	
+
 	// Commit transaction
 	if err := tx.Commit(ctx); err != nil {
 		log.Printf("❌ Failed to commit transaction: %v", err)
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
-	
+
 	log.Printf("✅ Personal info updated successfully - UserID: %s", userID)
 	return nil
 }
@@ -626,14 +625,14 @@ func (r *UserRepository) GetActiveActivityRules(ctx context.Context) (*models.Ac
 
 	var rules models.ActivityRules
 	var rulesContentJSON string
-	
+
 	err := database.GetDB().QueryRow(ctx, query).Scan(
 		&rules.Version,
 		&rules.Title,
 		&rules.Description,
 		&rulesContentJSON,
 	)
-	
+
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("no active activity rules found")
@@ -668,7 +667,7 @@ func (r *UserRepository) AcceptActivityRules(ctx context.Context, userID, versio
 			updated_at = NOW()
 		WHERE id = $1
 	`
-	
+
 	_, err = tx.Exec(ctx, updateQuery, userID, version)
 	if err != nil {
 		return fmt.Errorf("failed to update user activity rules acceptance: %w", err)
@@ -685,7 +684,7 @@ func (r *UserRepository) AcceptActivityRules(ctx context.Context, userID, versio
 			ip_address = EXCLUDED.ip_address,
 			user_agent = EXCLUDED.user_agent
 	`
-	
+
 	_, err = tx.Exec(ctx, auditQuery, userID, version, ipAddress, userAgent)
 	if err != nil {
 		return fmt.Errorf("failed to create activity rules audit record: %w", err)

@@ -34,9 +34,9 @@ type EnhancedVoteResponse struct {
 
 // EnhancedActivityWithTeams represents an activity with its teams, vote counts, and user voting status
 type EnhancedActivityWithTeams struct {
-	Activity Activity     `json:"activity"`
+	Activity Activity        `json:"activity"`
 	Teams    []TeamWithVotes `json:"teams"`
-	UserVote VotingStatus `json:"user_vote"`
+	UserVote VotingStatus    `json:"user_vote"`
 }
 
 // GetHardcodedTeams returns the 6 hardcoded teams with fixed UUIDs
@@ -47,11 +47,11 @@ func GetHardcodedTeams() []Team {
 	desc4 := "Team Emerald for the Ananped 8M celebration"
 	desc5 := "Team Purple for the Ananped 8M celebration"
 	desc6 := "Team Silver for the Ananped 8M celebration"
-	
+
 	return []Team{
 		{
 			ID:          "550e8400-e29b-41d4-a716-446655440001", // Fixed UUID for Team A
-			ActivityID:  "active", // Static activity ID
+			ActivityID:  "active",                               // Static activity ID
 			Name:        "A",
 			DisplayName: "Team Crimson",
 			Description: &desc1,
