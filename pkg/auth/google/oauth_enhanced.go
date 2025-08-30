@@ -128,26 +128,9 @@ func (h *EnhancedOAuthHandler) HandleCallback(w http.ResponseWriter, r *http.Req
 
 	log.Printf("✅ User created/updated successfully - UserID: %s", authData.User.ID)
 
-	// Determine the appropriate redirect route based on user status
-	var targetRoute string
-	personalInfoComplete := isPersonalInfoComplete(authData.User)
-
-	if personalInfoComplete && authData.User.TermsAccepted && authData.User.PDPAAccepted {
-		// User has completed all requirements, redirect to home
-		targetRoute = "/home"
-	} else {
-		// User needs to complete onboarding, redirect to appropriate step
-		if !personalInfoComplete {
-			// User needs to complete personal information
-			targetRoute = "/personal-info"
-		} else if !authData.User.TermsAccepted || !authData.User.PDPAAccepted {
-			// User has personal info but needs to accept terms
-			targetRoute = "/pdpa-terms"
-		} else {
-			// Fallback for any other incomplete state
-			targetRoute = "/home"
-		}
-	}
+	// Always redirect to smart-router and let frontend handle routing decisions
+	// This eliminates duplicate routing logic and ensures consistency
+	targetRoute := "/smart-router"
 
 	// Redirect to frontend with both JWT token and Google access token
 	// JWT token for backend authentication, Google token for YouTube API
@@ -185,7 +168,7 @@ func (h *EnhancedOAuthHandler) HandleCallback(w http.ResponseWriter, r *http.Req
 	baseURL.RawQuery = params.Encode()
 	redirectURL := baseURL.String()
 
-	log.Printf("🔄 Redirecting to frontend target route: %s", redirectURL)
+	log.Printf("🔄 Redirecting to frontend SmartRouter for client-side routing: %s", redirectURL)
 	http.Redirect(w, r, redirectURL, http.StatusTemporaryRedirect)
 }
 
