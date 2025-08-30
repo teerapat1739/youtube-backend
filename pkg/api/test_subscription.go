@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 
+	"github.com/gamemini/youtube/pkg/config"
 	"github.com/gamemini/youtube/pkg/models"
 	"github.com/gamemini/youtube/pkg/repository"
 	"github.com/gamemini/youtube/pkg/services"
@@ -37,7 +37,8 @@ func HandleTestSubscription(w http.ResponseWriter, r *http.Request) {
 	userID := vars["user_id"]
 	
 	// Get channel ID from environment variable
-	channelID := os.Getenv("TARGET_YOUTUBE_CHANNEL_ID")
+	appConfig := config.GetConfig()
+	channelID := appConfig.TargetChannelID
 	if channelID == "" {
 		log.Printf("❌ [TEST-SUBSCRIPTION] TARGET_YOUTUBE_CHANNEL_ID not set in environment")
 		sendTestErrorResponse(w, userID, "", "Target channel ID not configured", http.StatusInternalServerError)
@@ -54,7 +55,7 @@ func HandleTestSubscription(w http.ResponseWriter, r *http.Request) {
 	
 	// Initialize services
 	userRepo := repository.NewUserRepository()
-	jwtSecret := os.Getenv("JWT_SECRET")
+	jwtSecret := config.GetConfig().JWTSecret
 	if jwtSecret == "" {
 		jwtSecret = "default-development-secret-change-in-production"
 	}
@@ -166,7 +167,8 @@ func HandleTestSubscription(w http.ResponseWriter, r *http.Request) {
 // checkSubscriptionWithToken checks if a user is subscribed to a channel using an access token
 func checkSubscriptionWithToken(ctx context.Context, accessToken string) (bool, error) {
 	// Get channel ID from environment variable
-	channelID := os.Getenv("TARGET_YOUTUBE_CHANNEL_ID")
+	appConfig := config.GetConfig()
+	channelID := appConfig.TargetChannelID
 	if channelID == "" {
 		log.Printf("❌ [TOKEN-SUBSCRIPTION] TARGET_YOUTUBE_CHANNEL_ID not set in environment")
 		return false, fmt.Errorf("target channel ID not configured")

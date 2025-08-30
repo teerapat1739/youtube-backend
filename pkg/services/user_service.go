@@ -10,10 +10,10 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/gamemini/youtube/pkg/config"
 	"github.com/gamemini/youtube/pkg/models"
 	"github.com/gamemini/youtube/pkg/repository"
 	"github.com/golang-jwt/jwt/v5"
@@ -523,8 +523,9 @@ func (s *UserService) refreshTokenWithGoogle(ctx context.Context, refreshToken s
 	log.Printf("🔄 Calling Google token refresh endpoint")
 	
 	// Get OAuth configuration
-	clientID := os.Getenv("GOOGLE_CLIENT_ID")
-	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
+	appConfig := config.GetConfig()
+	clientID := appConfig.OAuthConfig.ClientID
+	clientSecret := appConfig.OAuthConfig.ClientSecret
 	
 	if clientID == "" || clientSecret == "" {
 		return nil, fmt.Errorf("missing Google OAuth credentials")

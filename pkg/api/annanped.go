@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"os"
 
+	"github.com/gamemini/youtube/pkg/config"
 	"google.golang.org/api/youtube/v3"
 )
 
@@ -41,7 +41,7 @@ func HandleAnanpedSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get YouTube API key from environment
-	apiKey := os.Getenv("YOUTUBE_API_KEY")
+	apiKey := config.GetConfig().YouTubeAPIKey
 	if apiKey == "" {
 		log.Printf("❌ [ANNANPED-CHECK] YOUTUBE_API_KEY environment variable not set")
 		sendAnanpedErrorResponse(w, "YouTube API not configured", http.StatusInternalServerError)

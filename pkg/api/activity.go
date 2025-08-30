@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
+	"github.com/gamemini/youtube/pkg/config"
 	"github.com/gamemini/youtube/pkg/models"
 	"github.com/gamemini/youtube/pkg/repository"
 	"github.com/gamemini/youtube/pkg/services"
@@ -78,7 +78,7 @@ func HandleSubscriptionCheck(w http.ResponseWriter, r *http.Request) {
 
 	// Create response with detailed information
 	// Get channel ID from environment for response
-	channelID := os.Getenv("TARGET_YOUTUBE_CHANNEL_ID")
+	channelID := config.GetConfig().TargetChannelID
 	
 	response := ActivityResponse{
 		Success: true,
@@ -323,7 +323,7 @@ func createYouTubeServiceWithAPIKey(ctx context.Context, apiKey string) (*youtub
 // checkSubscription checks if the authenticated user is subscribed to the specified channel (legacy function)
 func checkSubscription(service *youtube.Service) (bool, error) {
 	// Get channel ID from environment variable
-	channelID := os.Getenv("TARGET_YOUTUBE_CHANNEL_ID")
+	channelID := config.GetConfig().TargetChannelID
 	if channelID == "" {
 		log.Printf("❌ [CHECK-SUBSCRIPTION] TARGET_YOUTUBE_CHANNEL_ID not set in environment")
 		return false, fmt.Errorf("target channel ID not configured")
@@ -406,7 +406,7 @@ func extractUserIDFromJWT(tokenString string) (string, error) {
 	log.Printf("🔑 [JWT-EXTRACT] Extracting user ID from JWT token")
 	
 	// Get JWT secret from environment
-	jwtSecret := os.Getenv("JWT_SECRET")
+	jwtSecret := config.GetConfig().JWTSecret
 	if jwtSecret == "" {
 		return "", fmt.Errorf("JWT_SECRET not configured")
 	}
@@ -444,7 +444,7 @@ func checkUserSubscriptionWithOAuth(ctx context.Context, userID string) (bool, s
 	
 	// Initialize services
 	userRepo := repository.NewUserRepository()
-	jwtSecret := os.Getenv("JWT_SECRET")
+	jwtSecret := config.GetConfig().JWTSecret
 	if jwtSecret == "" {
 		jwtSecret = "default-development-secret-change-in-production"
 	}

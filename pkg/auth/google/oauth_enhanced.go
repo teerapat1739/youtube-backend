@@ -6,9 +6,9 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
 
+	"github.com/gamemini/youtube/pkg/config"
 	"github.com/gamemini/youtube/pkg/models"
 	"github.com/gamemini/youtube/pkg/repository"
 	"github.com/gamemini/youtube/pkg/services"
@@ -57,7 +57,7 @@ func (h *EnhancedOAuthHandler) HandleCallback(w http.ResponseWriter, r *http.Req
 	log.Println("🔄 Processing enhanced Google OAuth callback")
 
 	ctx := r.Context()
-	frontendURL := os.Getenv("FRONTEND_URL")
+	frontendURL := config.GetConfig().FrontendURL
 	if frontendURL == "" {
 		frontendURL = "http://localhost:3000"
 	}

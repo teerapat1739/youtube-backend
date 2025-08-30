@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"sync"
 	"time"
 
+	"github.com/gamemini/youtube/pkg/config"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -19,7 +19,8 @@ var (
 )
 
 func init() {
-	debugMode = os.Getenv("APP_DEBUG") == "true"
+	// Debug mode will be initialized when config is loaded
+	debugMode = false
 }
 
 // GetRedis returns the singleton Redis client or nil if not configured
@@ -33,9 +34,11 @@ func GetRedis() *redis.Client {
 	return redisClient
 }
 
-// initRedisClient initializes the Redis client from REDIS_URL environment variable
+// initRedisClient initializes the Redis client from centralized configuration
 func initRedisClient() (*redis.Client, error) {
-	redisURL := os.Getenv("REDIS_URL")
+	appConfig := config.GetConfig()
+	debugMode = appConfig.Debug
+	redisURL := appConfig.RedisURL
 	if redisURL == "" {
 		return nil, fmt.Errorf("REDIS_URL environment variable is required")
 	}

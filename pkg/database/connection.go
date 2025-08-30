@@ -3,9 +3,9 @@ package database
 import (
 	"context"
 	"fmt"
-	"os"
 	"time"
 
+	"github.com/gamemini/youtube/pkg/config"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -13,23 +13,23 @@ import (
 // DB is the global database connection pool
 var DB *pgxpool.Pool
 
-// InitDB initializes the database connection based on environment
+// InitDB initializes the database connection based on centralized configuration
 func InitDB() error {
-	env := os.Getenv("NODE_ENV")
+	appConfig := config.GetConfig()
 
-	switch env {
-	case "production":
+	switch appConfig.Environment {
+	case config.EnvProduction:
 		return InitProductionDB()
-	case "development", "local":
+	case config.EnvDevelopment, config.EnvLocal:
 		return InitLocalDB()
 	default:
 		return InitLocalDB() // Default to local for safety
 	}
 }
 
-// InitLocalDB initializes local Supabase connection
+// InitLocalDB initializes local database connection
 func InitLocalDB() error {
-	databaseURL := os.Getenv("DATABASE_URL")
+	databaseURL := config.GetConfig().DatabaseURL
 	if databaseURL == "" {
 		return fmt.Errorf("DATABASE_URL environment variable is required")
 	}
@@ -62,13 +62,13 @@ func InitLocalDB() error {
 		return fmt.Errorf("unable to ping database: %v", err)
 	}
 
-	fmt.Println("✅ Connected to local Supabase database")
+	fmt.Println("✅ Connected to local database")
 	return nil
 }
 
-// InitProductionDB initializes production GCP connection
+// InitProductionDB initializes production database connection
 func InitProductionDB() error {
-	databaseURL := os.Getenv("DATABASE_URL")
+	databaseURL := config.GetConfig().DatabaseURL
 	if databaseURL == "" {
 		return fmt.Errorf("DATABASE_URL environment variable is required")
 	}
@@ -103,7 +103,7 @@ func InitProductionDB() error {
 		return fmt.Errorf("unable to ping database: %v", err)
 	}
 
-	fmt.Println("✅ Connected to production GCP database")
+	fmt.Println("✅ Connected to production database")
 	return nil
 }
 
