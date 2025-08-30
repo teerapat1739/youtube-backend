@@ -31,9 +31,9 @@ type Config struct {
 	JWTSecret   string
 
 	// API configuration
-	YouTubeAPIKey      string
-	TargetChannelID    string
-	YouTubeAPIBaseURL  string
+	YouTubeAPIKey     string
+	TargetChannelID   string
+	YouTubeAPIBaseURL string
 
 	// Database configuration
 	DatabaseURL string
@@ -123,13 +123,14 @@ func detectEnvironment() Environment {
 func isGCPCloudRun() bool {
 	// GCP Cloud Run sets these environment variables automatically
 	gcpIndicators := []string{
-		"K_SERVICE",        // Cloud Run service name
-		"K_REVISION",       // Cloud Run revision
-		"K_CONFIGURATION",  // Cloud Run configuration
+		"K_SERVICE",       // Cloud Run service name
+		"K_REVISION",      // Cloud Run revision
+		"K_CONFIGURATION", // Cloud Run configuration
 	}
 
 	for _, indicator := range gcpIndicators {
 		if os.Getenv(indicator) != "" {
+			log.Printf("🌐 GCP Cloud Run environment detected: %s", indicator)
 			return true
 		}
 	}
@@ -138,9 +139,12 @@ func isGCPCloudRun() bool {
 	if port := os.Getenv("PORT"); port != "" {
 		// Also check for absence of typical local development indicators
 		if os.Getenv("HOME") == "" || strings.Contains(os.Getenv("PWD"), "/app") {
+			log.Printf("🌐 GCP Cloud Run environment detected: PORT=%s", port)
 			return true
 		}
 	}
+
+	log.Println("🌐 Not running in GCP Cloud Run environment")
 
 	return false
 }
@@ -186,29 +190,29 @@ func loadEnvFile(filename string) error {
 
 	scanner := bufio.NewScanner(file)
 	lineNum := 0
-	
+
 	for scanner.Scan() {
 		lineNum++
 		line := strings.TrimSpace(scanner.Text())
-		
+
 		// Skip empty lines and comments
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		
+
 		// Parse key=value pairs
 		if strings.Contains(line, "=") {
 			parts := strings.SplitN(line, "=", 2)
 			if len(parts) == 2 {
 				key := strings.TrimSpace(parts[0])
 				value := strings.TrimSpace(parts[1])
-				
+
 				// Remove quotes if present
 				if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) ||
-				   (strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
+					(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
 					value = value[1 : len(value)-1]
 				}
-				
+
 				// Only set if not already set (allows override via system env)
 				if os.Getenv(key) == "" {
 					os.Setenv(key, value)
@@ -216,7 +220,7 @@ func loadEnvFile(filename string) error {
 			}
 		}
 	}
-	
+
 	return scanner.Err()
 }
 
@@ -267,13 +271,8 @@ func buildConfig(env Environment) (*Config, error) {
 func parseAllowedOrigins() ([]string, error) {
 	envOrigins := os.Getenv("ALLOWED_ORIGINS")
 	if envOrigins == "" {
-		// Provide development defaults
-		log.Println("⚠️  ALLOWED_ORIGINS not set, using development defaults")
-		return []string{
-			"http://localhost:3000",
-			"http://localhost:5173",
-			"https://localhost:3000",
-		}, nil
+		// No defaults - ALLOWED_ORIGINS is required
+		return nil, fmt.Errorf("ALLOWED_ORIGINS environment variable is required")
 	}
 
 	// Parse comma-separated origins
@@ -296,20 +295,31 @@ func parseAllowedOrigins() ([]string, error) {
 // validateConfig validates required configuration values
 func validateConfig(config *Config) error {
 	var errors []string
+	var warnings []string
 
-	// Validate required fields based on environment
+	// Universal required fields (all environments)
 	if len(config.AllowedOrigins) == 0 {
-		errors = append(errors, "at least one allowed origin must be configured")
+		errors = append(errors, "ALLOWED_ORIGINS is required - at least one allowed origin must be configured")
 	}
 
 	if config.DatabaseURL == "" {
 		errors = append(errors, "DATABASE_URL is required")
 	}
 
-	// Production-specific validations
+	// Environment-specific validations
 	if config.Environment == EnvProduction {
+		// Production: All OAuth and URL configs are REQUIRED
 		if config.OAuthConfig.ClientID == "" {
 			errors = append(errors, "GOOGLE_CLIENT_ID is required in production")
+		}
+		if config.OAuthConfig.ClientSecret == "" {
+			errors = append(errors, "GOOGLE_CLIENT_SECRET is required in production")
+		}
+		if config.OAuthConfig.RedirectURL == "" {
+			errors = append(errors, "REDIRECT_URL is required in production - no fallbacks allowed")
+		}
+		if config.FrontendURL == "" {
+			errors = append(errors, "FRONTEND_URL is required in production - no fallbacks allowed")
 		}
 		if config.JWTSecret == "" {
 			errors = append(errors, "JWT_SECRET is required in production")
@@ -318,20 +328,41 @@ func validateConfig(config *Config) error {
 			errors = append(errors, "YOUTUBE_API_KEY is required in production")
 		}
 	} else {
-		// Development warnings (non-blocking)
+		// Development: OAuth configs are strongly recommended
 		if config.OAuthConfig.ClientID == "" {
-			log.Println("⚠️  GOOGLE_CLIENT_ID not set - Google OAuth will not work")
+			warnings = append(warnings, "GOOGLE_CLIENT_ID not set - Google OAuth will not work")
+		}
+		if config.OAuthConfig.ClientSecret == "" {
+			warnings = append(warnings, "GOOGLE_CLIENT_SECRET not set - Google OAuth will not work")
+		}
+		if config.OAuthConfig.RedirectURL == "" {
+			warnings = append(warnings, "REDIRECT_URL not set - OAuth callbacks will fail")
+		}
+		if config.FrontendURL == "" {
+			warnings = append(warnings, "FRONTEND_URL not set - OAuth redirects will fail")
 		}
 		if config.JWTSecret == "" {
-			log.Println("⚠️  JWT_SECRET not set - JWT authentication will not work")
+			warnings = append(warnings, "JWT_SECRET not set - JWT authentication will not work")
 		}
 		if config.YouTubeAPIKey == "" {
-			log.Println("⚠️  YOUTUBE_API_KEY not set - YouTube API calls will not work")
+			warnings = append(warnings, "YOUTUBE_API_KEY not set - YouTube API calls will not work")
 		}
 	}
 
+	// Log warnings for development
+	for _, warning := range warnings {
+		log.Printf("⚠️  WARNING: %s", warning)
+	}
+
+	// Fail fast if any critical configuration is missing
 	if len(errors) > 0 {
-		return fmt.Errorf("configuration errors: %s", strings.Join(errors, "; "))
+		log.Printf("❌ CONFIGURATION VALIDATION FAILED:")
+		for _, err := range errors {
+			log.Printf("   - %s", err)
+		}
+		log.Printf("❌ Application cannot start with missing required configuration.")
+		log.Printf("🔧 Please set the required environment variables and restart.")
+		return fmt.Errorf("configuration validation failed - missing required environment variables: %s", strings.Join(errors, "; "))
 	}
 
 	return nil
@@ -374,6 +405,7 @@ func (c *Config) PrintSummary() {
 	log.Printf("🌐 Frontend URL: %s", c.FrontendURL)
 	log.Printf("🔑 OAuth Client ID: %s", maskSecret(c.OAuthConfig.ClientID))
 	log.Printf("🔑 OAuth Client Secret: %s", maskSecret(c.OAuthConfig.ClientSecret))
+	log.Printf("🔑 OAuth Redirect URL: %s", c.OAuthConfig.RedirectURL)
 	log.Printf("🔑 JWT Secret: %s", maskSecret(c.JWTSecret))
 	log.Printf("🔑 YouTube API Key: %s", maskSecret(c.YouTubeAPIKey))
 	log.Printf("🔑 Target Channel ID: %s", c.TargetChannelID)
@@ -421,7 +453,7 @@ func maskDatabaseURL(url string) string {
 	if url == "" {
 		return "(not set)"
 	}
-	
+
 	// Hide password in database URLs
 	if strings.Contains(url, "@") {
 		parts := strings.Split(url, "@")
@@ -436,6 +468,6 @@ func maskDatabaseURL(url string) string {
 			}
 		}
 	}
-	
+
 	return url
 }

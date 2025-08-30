@@ -58,9 +58,7 @@ func (h *EnhancedOAuthHandler) HandleCallback(w http.ResponseWriter, r *http.Req
 
 	ctx := r.Context()
 	frontendURL := config.GetConfig().FrontendURL
-	if frontendURL == "" {
-		frontendURL = "http://localhost:3000"
-	}
+	// Note: If frontendURL is empty, it will fail during config validation at startup
 
 	// Get authorization code
 	code := r.URL.Query().Get("code")

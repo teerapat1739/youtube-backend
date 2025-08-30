@@ -18,16 +18,9 @@ import (
 func GetOAuthConfig() *oauth2.Config {
 	appConfig := config.GetConfig()
 
-	// Use redirect URL from config
+	// Use redirect URL from config - no fallbacks allowed
 	redirectURL := appConfig.OAuthConfig.RedirectURL
-	if redirectURL == "" {
-		// Use default for Cloud Run production
-		if appConfig.IsProduction() {
-			redirectURL = "https://youtube-backend-283958071703.asia-southeast1.run.app/auth/google/callback"
-		} else {
-			redirectURL = "http://localhost:8080/auth/google/callback"
-		}
-	}
+	// Note: If redirectURL is empty, it will fail during config validation at startup
 
 	return &oauth2.Config{
 		RedirectURL:  redirectURL,
@@ -107,12 +100,10 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 
 // CallbackHandler handles the callback from Google and redirects to Vue frontend
 func CallbackHandler(w http.ResponseWriter, r *http.Request) {
-	// Get frontend URL from environment variable with fallback
+	// Get frontend URL from config - no fallbacks allowed
 	frontendURL := config.GetConfig().FrontendURL
 	log.Println("frontendURL", frontendURL)
-	if frontendURL == "" {
-		frontendURL = "http://localhost:3000"
-	}
+	// Note: If frontendURL is empty, it will fail during config validation at startup
 
 	// Get the authorization code from URL
 	code := r.URL.Query().Get("code")
