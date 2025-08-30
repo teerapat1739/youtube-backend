@@ -18,10 +18,6 @@ The following configuration files have been updated:
 - `/Users/gamemini/workspace/youtube/be/.env`
 - `/Users/gamemini/workspace/youtube/be/.env.local`
 
-### New Database URL:
-```
-postgresql://neondb_owner:npg_P0OWi3VQcUsf@ep-blue-bar-a11q0cer-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
-```
 
 ## Database Schema
 
@@ -69,7 +65,7 @@ The new Neon database contains the following tables:
 ### Database Structure Verification
 ```bash
 # Connect to Neon database
-psql "postgresql://neondb_owner:npg_P0OWi3VQcUsf@ep-blue-bar-a11q0cer-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
+psql "postgresql://use:npg_P0OWi3VQcUsf@ep-blue-bar-a11q0cer-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
 # Verify tables
 \dt
