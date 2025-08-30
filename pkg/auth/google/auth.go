@@ -8,30 +8,31 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"os"
 
+	"github.com/gamemini/youtube/pkg/config"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
 
-// GetOAuthConfig returns Google OAuth configuration with current environment variables
+// GetOAuthConfig returns Google OAuth configuration using centralized config
 func GetOAuthConfig() *oauth2.Config {
-	// Check for explicit redirect URL first (for local development)
-	redirectURL := os.Getenv("REDIRECT_URL")
+	appConfig := config.GetConfig()
+
+	// Use redirect URL from config
+	redirectURL := appConfig.OAuthConfig.RedirectURL
 	if redirectURL == "" {
-		// Fall back to BASE_URL for production
-		baseURL := os.Getenv("BASE_URL")
-		if baseURL == "" {
-			// Use the deployed URL as default for Cloud Run
-			baseURL = "https://youtube-backend-283958071703.asia-southeast1.run.app"
+		// Use default for Cloud Run production
+		if appConfig.IsProduction() {
+			redirectURL = "https://youtube-backend-283958071703.asia-southeast1.run.app/auth/google/callback"
+		} else {
+			redirectURL = "http://localhost:8080/auth/google/callback"
 		}
-		redirectURL = baseURL + "/auth/google/callback"
 	}
 
 	return &oauth2.Config{
 		RedirectURL:  redirectURL,
-		ClientID:     os.Getenv("GOOGLE_CLIENT_ID"),
-		ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+		ClientID:     appConfig.OAuthConfig.ClientID,
+		ClientSecret: appConfig.OAuthConfig.ClientSecret,
 		Scopes: []string{
 			"https://www.googleapis.com/auth/userinfo.email",
 			"https://www.googleapis.com/auth/userinfo.profile",
@@ -107,7 +108,7 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 // CallbackHandler handles the callback from Google and redirects to Vue frontend
 func CallbackHandler(w http.ResponseWriter, r *http.Request) {
 	// Get frontend URL from environment variable with fallback
-	frontendURL := os.Getenv("FRONTEND_URL")
+	frontendURL := config.GetConfig().FrontendURL
 	log.Println("frontendURL", frontendURL)
 	if frontendURL == "" {
 		frontendURL = "http://localhost:3000"

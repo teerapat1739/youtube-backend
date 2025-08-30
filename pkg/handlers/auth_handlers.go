@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/gamemini/youtube/pkg/auth/google"
+	"github.com/gamemini/youtube/pkg/config"
 	"github.com/gamemini/youtube/pkg/models"
 	"github.com/gamemini/youtube/pkg/repository"
 	"github.com/gamemini/youtube/pkg/services"
@@ -23,7 +23,8 @@ type AuthHandlers struct {
 
 // NewAuthHandlers creates new authentication handlers
 func NewAuthHandlers() *AuthHandlers {
-	jwtSecret := os.Getenv("JWT_SECRET")
+	appConfig := config.GetConfig()
+	jwtSecret := appConfig.JWTSecret
 	if jwtSecret == "" {
 		jwtSecret = "default-development-secret-change-in-production"
 		log.Println("⚠️  Using default JWT secret - set JWT_SECRET environment variable in production")

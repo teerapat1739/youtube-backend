@@ -3,10 +3,10 @@ package be
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
+	"github.com/gamemini/youtube/pkg/config"
 )
 
 // Credentials represents the user credentials for BE login
@@ -28,9 +28,10 @@ type User struct {
 	// Additional user fields can be added here
 }
 
-// getJWTSecret returns the JWT secret from environment variable or default
+// getJWTSecret returns the JWT secret from configuration or default
 func getJWTSecret() []byte {
-	secret := os.Getenv("JWT_SECRET")
+	appConfig := config.GetConfig()
+	secret := appConfig.JWTSecret
 	if secret == "" {
 		secret = "your-secret-key" // Default for development
 	}
