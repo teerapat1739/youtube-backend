@@ -1,27 +1,53 @@
 package domain
 
 import (
+	"errors"
 	"time"
 )
 
-// Vote represents a vote record with PDPA compliance
+// Common errors
+var (
+	ErrUserNotFound  = errors.New("user not found: personal info must be created first")
+	ErrVoteFinalized = errors.New("vote is finalized and cannot be changed")
+	ErrDuplicatePhone = errors.New("this phone number has already been used")
+)
+
+// Vote represents a unified record that contains both personal info and voting data
 type Vote struct {
-	ID                   string     `json:"id"`
-	VoteID               string     `json:"vote_id"`
-	UserID               string     `json:"user_id"`
-	TeamID               int        `json:"team_id"`
-	VoterName            string     `json:"voter_name"`
-	VoterEmail           string     `json:"voter_email"`
-	VoterPhone           string     `json:"voter_phone"`
-	IPAddress            string     `json:"ip_address"`
-	UserAgent            string     `json:"user_agent"`
+	// Primary key and identifiers
+	ID     string `json:"id"`
+	UserID string `json:"user_id"` // This serves as the primary key for the unified table
+	
+	// Personal information fields
+	Phone     string `json:"phone"` // Normalized phone number (unique)
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Email     string `json:"email"`
+	
+	// PDPA compliance fields
+	ConsentPDPA          bool       `json:"consent_pdpa"`
 	ConsentTimestamp     *time.Time `json:"consent_timestamp,omitempty"`
 	ConsentIP            string     `json:"consent_ip,omitempty"`
 	PrivacyPolicyVersion string     `json:"privacy_policy_version,omitempty"`
-	PDPAConsent          bool       `json:"pdpa_consent"`
 	MarketingConsent     bool       `json:"marketing_consent"`
 	DataRetentionUntil   *time.Time `json:"data_retention_until,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
+	
+	// Vote-specific fields
+	CandidateID int        `json:"candidate_id,omitempty"` // 0 means no vote cast yet
+	VotedAt     *time.Time `json:"voted_at,omitempty"`
+	
+	// Audit fields
+	IPAddress string    `json:"ip_address,omitempty"`
+	UserAgent string    `json:"user_agent,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	
+	// Legacy fields for compatibility (will be deprecated)
+	VoteID     string `json:"vote_id,omitempty"`     // Deprecated: use ID
+	TeamID     int    `json:"team_id,omitempty"`     // Deprecated: use CandidateID
+	VoterName  string `json:"voter_name,omitempty"`  // Deprecated: use FirstName + LastName
+	VoterEmail string `json:"voter_email,omitempty"` // Deprecated: use Email
+	VoterPhone string `json:"voter_phone,omitempty"` // Deprecated: use Phone
 }
 
 // VoteRequest represents a vote submission request
@@ -104,4 +130,54 @@ type VoteDistribution struct {
 	Range      string  `json:"range"`
 	Count      int     `json:"count"`
 	Percentage float64 `json:"percentage"`
+}
+
+// PersonalInfoRequest represents a request to create/update personal info
+type PersonalInfoRequest struct {
+	FirstName   string `json:"first_name" validate:"required,min=2,max=100"`
+	LastName    string `json:"last_name" validate:"required,min=2,max=100"`
+	Email       string `json:"email" validate:"required,email"`
+	Phone       string `json:"phone" validate:"required,min=10,max=20"`
+	ConsentPDPA bool   `json:"consent_pdpa" validate:"required,eq=true"`
+}
+
+// PersonalInfoResponse represents the response after creating/updating personal info
+type PersonalInfoResponse struct {
+	UserID    string    `json:"user_id"`
+	FirstName string    `json:"first_name"`
+	LastName  string    `json:"last_name"`
+	Email     string    `json:"email"`
+	Phone     string    `json:"phone"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Message   string    `json:"message"`
+}
+
+// VoteOnlyRequest represents a request to submit only the vote (no personal info)
+type VoteOnlyRequest struct {
+	UserID       string `json:"user_id" validate:"required"`
+	CandidateID  int    `json:"candidate_id" validate:"required,min=1"`
+}
+
+// VoteOnlyResponse represents the response after submitting a vote
+type VoteOnlyResponse struct {
+	UserID      string    `json:"user_id"`
+	CandidateID int       `json:"candidate_id"`
+	VoteID      string    `json:"vote_id,omitempty"`
+	VotedAt     time.Time `json:"voted_at"`
+	Message     string    `json:"message"`
+}
+
+// PersonalInfoMeResponse represents the response for GET /api/personal-info/me
+type PersonalInfoMeResponse struct {
+	UserID        string     `json:"user_id"`
+	Phone         string     `json:"phone"`
+	FirstName     string     `json:"first_name"`
+	LastName      string     `json:"last_name"`
+	Email         string     `json:"email"`
+	ConsentPDPA   bool       `json:"consent_pdpa"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
+	ConsentTimestamp *time.Time `json:"consent_timestamp,omitempty"`
+	MarketingConsent bool      `json:"marketing_consent"`
 }

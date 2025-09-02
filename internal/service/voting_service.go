@@ -67,7 +67,7 @@ func (s *VotingService) SubmitVote(ctx context.Context, userID string, req *doma
 	}
 
 	// Check for duplicate phone number with Redis caching
-	phoneUsed, err := s.cacheService.CheckPhoneUsageWithCache(ctx, normalizedPhone, 
+	phoneUsed, err := s.cacheService.CheckPhoneUsageWithCache(ctx, normalizedPhone,
 		func(ctx context.Context, phone string) (bool, error) {
 			vote, err := s.voteRepo.GetVoteByPhone(ctx, phone)
 			return vote != nil, err
@@ -111,7 +111,7 @@ func (s *VotingService) SubmitVote(ctx context.Context, userID string, req *doma
 		ConsentTimestamp:     &consentTime,
 		ConsentIP:            ipAddress,
 		PrivacyPolicyVersion: req.Consent.PrivacyPolicyVersion,
-		PDPAConsent:          req.Consent.PDPAConsent,
+		ConsentPDPA:          req.Consent.PDPAConsent,
 		MarketingConsent:     req.Consent.MarketingConsent,
 		DataRetentionUntil:   &retentionTime,
 	}
@@ -134,7 +134,7 @@ func (s *VotingService) SubmitVote(ctx context.Context, userID string, req *doma
 
 	// Cache user vote status and phone usage with error handling
 	if err := s.cacheService.CacheVoteSubmission(ctx, userID, normalizedPhone, req.TeamID); err != nil {
-		s.logger.Warn("Failed to cache vote submission", 
+		s.logger.Warn("Failed to cache vote submission",
 			zap.String("user_id", userID),
 			zap.Error(err))
 		// Continue execution - caching failure shouldn't fail the vote
@@ -293,7 +293,7 @@ func (s *VotingService) GetVotingResults(ctx context.Context) (*domain.VotingRes
 
 	// Calculate rankings and percentages
 	teamsWithRankings := s.buildTeamRankings(teams, totalVotes)
-	
+
 	// Determine winner (highest votes)
 	var winner *domain.TeamResultWithRanking
 	if len(teamsWithRankings) > 0 {
@@ -331,7 +331,7 @@ func (s *VotingService) buildTeamRankings(teams []domain.Team, totalVotes int) [
 	// Sort teams by vote count (descending)
 	sortedTeams := make([]domain.Team, len(teams))
 	copy(sortedTeams, teams)
-	
+
 	// Sort by vote count descending
 	for i := 0; i < len(sortedTeams)-1; i++ {
 		for j := i + 1; j < len(sortedTeams); j++ {
@@ -432,8 +432,118 @@ func (s *VotingService) HealthCheck(ctx context.Context) error {
 	if err := s.cacheService.HealthCheck(ctx); err != nil {
 		return fmt.Errorf("cache health check failed: %w", err)
 	}
-	
+
 	s.logger.Info("Voting service health check passed")
 	return nil
 }
 
+// CreateOrUpdatePersonalInfo handles creating or updating personal information
+func (s *VotingService) CreateOrUpdatePersonalInfo(ctx context.Context, req *domain.PersonalInfoRequest, ipAddress, userAgent string) (*domain.PersonalInfoResponse, error) {
+	// Normalize and validate phone number
+	normalizedPhone, err := utils.NormalizePhoneNumber(req.Phone)
+	if err != nil {
+		return nil, fmt.Errorf("invalid phone number format: %w", err)
+	}
+
+	// Validate Thai mobile number
+	if !utils.ValidateThaiPhoneNumber(normalizedPhone) {
+		return nil, fmt.Errorf("phone number must be a valid Thai mobile number")
+	}
+
+	// Create or update personal info
+	response, err := s.voteRepo.UpsertPersonalInfo(ctx, req, normalizedPhone, ipAddress, userAgent)
+	if err != nil {
+		s.logger.Error("Failed to upsert personal info",
+			zap.String("phone", normalizedPhone),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to save personal information: %w", err)
+	}
+
+	// Cache the phone usage to prevent duplicate voting attempts
+	phoneKey := fmt.Sprintf("phone_used:%s", normalizedPhone)
+	_ = s.redis.Set(ctx, phoneKey, response.UserID, redis.TTLUserVote)
+
+	s.logger.Info("Personal info saved successfully",
+		zap.String("user_id", response.UserID),
+		zap.String("phone", normalizedPhone))
+
+	return response, nil
+}
+
+// SubmitVoteOnly handles vote submission for users who already have personal info
+func (s *VotingService) SubmitVoteOnly(ctx context.Context, req *domain.VoteOnlyRequest) (*domain.VoteOnlyResponse, error) {
+	// Validate team exists
+	team, err := s.cacheService.GetTeamWithCache(ctx, req.CandidateID,
+		func(ctx context.Context, id int) (*domain.Team, error) {
+			return s.voteRepo.GetTeamByID(ctx, id)
+		})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get team: %w", err)
+	}
+	if team == nil {
+		return nil, fmt.Errorf("team not found")
+	}
+
+	// Submit vote
+	response, err := s.voteRepo.UpdateVoteOnly(ctx, req)
+	if err != nil {
+		if err == domain.ErrUserNotFound {
+			return nil, err
+		}
+		if err == domain.ErrVoteFinalized {
+			return nil, err
+		}
+		s.logger.Error("Failed to submit vote",
+			zap.String("user_id", req.UserID),
+			zap.Int("candidate_id", req.CandidateID),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to submit vote: %w", err)
+	}
+
+	// Cache user vote status
+	voteKey := fmt.Sprintf(redis.KeyUserVoted, req.UserID)
+	_ = s.redis.Set(ctx, voteKey, req.CandidateID, redis.TTLUserVote)
+
+	// Invalidate relevant caches for consistency
+	s.cacheService.InvalidateVotingCaches(req.CandidateID)
+
+	// Refresh materialized view asynchronously
+	// Note: This is already handled in the repository UpdateVoteOnly method
+
+	s.logger.Info("Vote submitted successfully",
+		zap.String("user_id", req.UserID),
+		zap.Int("candidate_id", req.CandidateID))
+
+	return response, nil
+}
+
+// SubmitVoteByPhone handles vote submission using phone number for identification
+func (s *VotingService) SubmitVoteByPhone(ctx context.Context, phone string, candidateID int) (*domain.VoteOnlyResponse, error) {
+	// Normalize and validate phone number
+	normalizedPhone, err := utils.NormalizePhoneNumber(phone)
+	if err != nil {
+		return nil, fmt.Errorf("invalid phone number format: %w", err)
+	}
+
+	// Get user by phone
+	user, err := s.voteRepo.GetUserByPhone(ctx, normalizedPhone)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+	if user == nil {
+		return nil, domain.ErrUserNotFound
+	}
+
+	// Submit vote using user ID
+	req := &domain.VoteOnlyRequest{
+		UserID:      user.UserID,
+		CandidateID: candidateID,
+	}
+
+	return s.SubmitVoteOnly(ctx, req)
+}
+
+// GetPersonalInfoByUserID retrieves personal info for the authenticated user
+func (s *VotingService) GetPersonalInfoByUserID(ctx context.Context, userID string) (*domain.PersonalInfoMeResponse, error) {
+	return s.voteRepo.GetPersonalInfoByUserID(ctx, userID)
+}
