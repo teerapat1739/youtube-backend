@@ -127,7 +127,7 @@ func (h *VotingHandler) SubmitVote(w http.ResponseWriter, r *http.Request) {
 	// Get client IP and User-Agent
 	ipAddress := h.getClientIP(r)
 	userAgent := r.Header.Get("User-Agent")
-
+	fmt.Printf("SubmitVote: userID = '%s', ipAddress = '%s', userAgent = '%s'\n", userID, ipAddress, userAgent)
 	// Submit vote
 	response, err := h.votingService.SubmitVote(ctx, userID, &req, ipAddress, userAgent)
 	if err != nil {
