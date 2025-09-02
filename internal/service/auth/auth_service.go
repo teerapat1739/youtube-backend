@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"time"
@@ -57,10 +58,12 @@ func (s *Service) ValidateGoogleToken(ctx context.Context, token string) (*domai
 
 // validateGoogleAccessToken validates a Google OAuth access token
 func (s *Service) validateGoogleAccessToken(ctx context.Context, token string) (*domain.UserProfile, error) {
-	s.logger.Debug("Validating Google access token")
+	s.logger.WithField("token_prefix", token[:20]+"...").Debug("Validating Google access token")
 	
 	// Use Google's tokeninfo endpoint to validate the access token
 	url := fmt.Sprintf("https://oauth2.googleapis.com/tokeninfo?access_token=%s", token)
+	
+	s.logger.WithField("url", url[:60]+"...").Debug("Making tokeninfo request")
 	
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -75,13 +78,21 @@ func (s *Service) validateGoogleAccessToken(ctx context.Context, token string) (
 	}
 	defer resp.Body.Close()
 	
+	s.logger.WithField("status_code", resp.StatusCode).Debug("Received tokeninfo response")
+	
 	if resp.StatusCode == http.StatusUnauthorized {
-		s.logger.WithField("status_code", resp.StatusCode).Debug("Google access token is invalid or expired")
+		s.logger.WithField("status_code", resp.StatusCode).Error("Google access token is invalid or expired")
 		return nil, errors.NewAuthenticationError("Invalid or expired Google token")
 	}
 	
 	if resp.StatusCode != http.StatusOK {
-		s.logger.WithField("status_code", resp.StatusCode).Debug("Google tokeninfo returned error")
+		// Read response body for more detailed error information
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			s.logger.WithError(err).WithField("status_code", resp.StatusCode).Error("Failed to read error response from Google tokeninfo")
+		} else {
+			s.logger.WithField("status_code", resp.StatusCode).WithField("response_body", string(body)).Error("Google tokeninfo returned error")
+		}
 		return nil, errors.NewAuthenticationError("Token validation failed")
 	}
 	
@@ -91,10 +102,19 @@ func (s *Service) validateGoogleAccessToken(ctx context.Context, token string) (
 		return nil, errors.NewInternalError("Failed to decode token information", err)
 	}
 	
+	s.logger.WithField("token_info", tokenInfo).Debug("Decoded tokeninfo response")
+	
 	// Verify the audience matches our client ID (if present in response)
-	if aud, ok := tokenInfo["aud"].(string); ok && aud != "" && aud != s.clientID {
-		s.logger.WithField("audience", aud).Error("Token audience mismatch")
-		return nil, errors.NewAuthenticationError("Token not intended for this application")
+	// Note: Google access tokens may not always include 'aud' field, unlike ID tokens
+	if aud, ok := tokenInfo["aud"].(string); ok && aud != "" {
+		if aud != s.clientID {
+			s.logger.WithField("expected_audience", s.clientID).WithField("actual_audience", aud).Error("Token audience mismatch")
+			return nil, errors.NewAuthenticationError("Token not intended for this application")
+		}
+		s.logger.WithField("audience_verification", "passed").Debug("Audience validation successful")
+	} else {
+		// Access tokens may not have audience, log for debugging but don't fail
+		s.logger.Debug("No audience field in token response (normal for access tokens)")
 	}
 	
 	// Extract user information from tokeninfo response
@@ -123,7 +143,13 @@ func (s *Service) validateGoogleAccessToken(ctx context.Context, token string) (
 	profile.FamilyName = getStringValue(tokenInfo, "family_name")
 	profile.Locale = getStringValue(tokenInfo, "locale")
 
-	s.logger.WithField("user_id", profile.Sub).Debug("Google access token validated successfully")
+	s.logger.WithFields(map[string]interface{}{
+		"user_id": profile.Sub,
+		"email": profile.Email,
+		"email_verified": profile.EmailVerified,
+		"has_picture": profile.Picture != "",
+		"has_name": profile.Name != "",
+	}).Info("Google access token validated successfully")
 	return profile, nil
 }
 
