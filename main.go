@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,6 +23,84 @@ import (
 	"be-v2/pkg/logger"
 	"be-v2/pkg/redis"
 )
+
+// Resources holds all resources that need cleanup
+type Resources struct {
+	db          *database.PostgresDB
+	redisClient *redis.Client
+	server      *http.Server
+	log         *logger.Logger
+	mu          sync.Mutex
+	closed      bool
+}
+
+// Cleanup gracefully closes all resources
+func (r *Resources) Cleanup(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+
+	var errors []error
+	
+	r.log.Info("Starting graceful shutdown...")
+
+	// Shutdown HTTP server first to stop accepting new requests
+	if r.server != nil {
+		r.log.Info("Shutting down HTTP server...")
+		if err := r.server.Shutdown(ctx); err != nil {
+			r.log.WithError(err).Error("Failed to shutdown HTTP server")
+			errors = append(errors, fmt.Errorf("HTTP server shutdown: %w", err))
+		} else {
+			r.log.Info("HTTP server shutdown complete")
+		}
+	}
+
+	// Close Redis connection with health check
+	if r.redisClient != nil {
+		r.log.Info("Closing Redis connection...")
+		
+		// Quick health check before closing (with short timeout)
+		healthCtx, healthCancel := context.WithTimeout(ctx, 2*time.Second)
+		if err := r.redisClient.Health(healthCtx); err != nil {
+			r.log.WithError(err).Warn("Redis health check failed before closing")
+		}
+		healthCancel()
+		
+		if err := r.redisClient.Close(); err != nil {
+			r.log.WithError(err).Error("Failed to close Redis connection")
+			errors = append(errors, fmt.Errorf("Redis close: %w", err))
+		} else {
+			r.log.Info("Redis connection closed successfully")
+		}
+	}
+
+	// Close database connection pool with health check
+	if r.db != nil {
+		r.log.Info("Closing database connection pool...")
+		
+		// Quick health check before closing (with short timeout)
+		healthCtx, healthCancel := context.WithTimeout(ctx, 2*time.Second)
+		if err := r.db.Health(healthCtx); err != nil {
+			r.log.WithError(err).Warn("Database health check failed before closing")
+		}
+		healthCancel()
+		
+		r.db.Close()
+		r.log.Info("Database connection pool closed successfully")
+	}
+
+	if len(errors) > 0 {
+		r.log.WithField("error_count", len(errors)).Error("Cleanup completed with errors")
+		return fmt.Errorf("cleanup completed with %d errors: %v", len(errors), errors)
+	}
+
+	r.log.Info("Graceful shutdown completed successfully")
+	return nil
+}
 
 func main() {
 	// Load configuration
@@ -56,14 +135,12 @@ func main() {
 	if err != nil {
 		log.WithError(err).Fatal("Failed to connect to database")
 	}
-	defer db.Close()
 
 	// Initialize Redis connection
 	redisClient, err := redis.NewClient(cfg.RedisURL)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to connect to Redis")
 	}
-	defer redisClient.Close()
 
 	// Initialize repositories and services
 	voteRepo := repository.NewVoteRepository(db)
@@ -81,31 +158,60 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Start server in a goroutine
-	go func() {
-		log.Info("Server starting on port " + cfg.Port)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.WithError(err).Fatal("Failed to start server")
+	// Create resources manager for cleanup
+	resources := &Resources{
+		db:          db,
+		redisClient: redisClient,
+		server:      server,
+		log:         log,
+	}
+
+	// Setup graceful shutdown handling
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+
+	// Setup cleanup function that will be called regardless of how the program exits
+	defer func() {
+		// Create context with timeout for cleanup operations
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := resources.Cleanup(cleanupCtx); err != nil {
+			log.WithError(err).Error("Cleanup completed with errors")
 		}
 	}()
 
-	// Wait for interrupt signal to gracefully shutdown the server
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	// Start server in a goroutine
+	serverErrChan := make(chan error, 1)
+	go func() {
+		log.Info("Server starting on port " + cfg.Port)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.WithError(err).Error("Server error occurred")
+			serverErrChan <- err
+		}
+	}()
 
-	log.Info("Shutting down server...")
-
-	// Create context with timeout for shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Shutdown server
-	if err := server.Shutdown(ctx); err != nil {
-		log.WithError(err).Fatal("Server forced to shutdown")
+	// Wait for interrupt signal or server error
+	select {
+	case sig := <-quit:
+		log.WithField("signal", sig.String()).Info("Received shutdown signal")
+	case err := <-serverErrChan:
+		log.WithError(err).Error("Server failed, initiating shutdown")
 	}
 
-	log.Info("Server exited")
+	log.Info("Initiating graceful shutdown...")
+
+	// Create context with timeout for shutdown operations
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+
+	// Perform cleanup - this will be called here and also in defer for safety
+	if err := resources.Cleanup(shutdownCtx); err != nil {
+		log.WithError(err).Error("Graceful shutdown completed with errors")
+		os.Exit(1)
+	}
+
+	log.Info("Application shutdown complete")
 }
 
 // setupRouter configures and returns the HTTP router
