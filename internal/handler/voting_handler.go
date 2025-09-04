@@ -99,10 +99,11 @@ func (h *VotingHandler) SubmitVote(w http.ResponseWriter, r *http.Request) {
 		req = domain.VoteRequest{
 			TeamID: minimalReq.TeamID,
 			PersonalInfo: domain.PersonalInfo{
-				FirstName: personalInfo.FirstName,
-				LastName:  personalInfo.LastName,
-				Email:     personalInfo.Email,
-				Phone:     personalInfo.Phone,
+				FirstName:     personalInfo.FirstName,
+				LastName:      personalInfo.LastName,
+				Email:         personalInfo.Email,
+				Phone:         personalInfo.Phone,
+				FavoriteVideo: personalInfo.FavoriteVideo,
 			},
 			Consent: domain.ConsentData{
 				PDPAConsent:          personalInfo.ConsentPDPA,
@@ -361,11 +362,12 @@ func (h *VotingHandler) CreatePersonalInfo(w http.ResponseWriter, r *http.Reques
 	if err := json.Unmarshal(rawReq, &nestedReq); err == nil && nestedReq.PersonalInfo.FirstName != "" {
 		// Convert nested format to flat format
 		req = domain.PersonalInfoRequest{
-			FirstName:   nestedReq.PersonalInfo.FirstName,
-			LastName:    nestedReq.PersonalInfo.LastName,
-			Email:       nestedReq.PersonalInfo.Email,
-			Phone:       nestedReq.PersonalInfo.Phone,
-			ConsentPDPA: nestedReq.Consent.PDPAConsent,
+			FirstName:     nestedReq.PersonalInfo.FirstName,
+			LastName:      nestedReq.PersonalInfo.LastName,
+			Email:         nestedReq.PersonalInfo.Email,
+			Phone:         nestedReq.PersonalInfo.Phone,
+			FavoriteVideo: nestedReq.PersonalInfo.FavoriteVideo,
+			ConsentPDPA:   nestedReq.Consent.PDPAConsent,
 		}
 	} else {
 		// Try flat format
@@ -499,6 +501,11 @@ func (h *VotingHandler) validatePersonalInfoRequest(req *domain.PersonalInfoRequ
 
 	if req.Phone == "" || len(req.Phone) < 10 {
 		return fmt.Errorf("phone number is required (min 10 digits)")
+	}
+
+	// Validate favorite video field (optional but limited to 1000 characters)
+	if len(req.FavoriteVideo) > 1000 {
+		return fmt.Errorf("favorite video field cannot exceed 1000 characters")
 	}
 
 	if !req.ConsentPDPA {

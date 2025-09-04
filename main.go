@@ -253,16 +253,6 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 
 	// Public API routes
 	r.Route("/api", func(r chi.Router) {
-		// New separated endpoints (no auth required)
-		r.Post("/personal-info", votingHandler.CreatePersonalInfo)
-		r.Post("/vote", votingHandler.SubmitVoteOnly)
-		
-		// Add v1/user routes for frontend compatibility
-		r.Route("/v1/user", func(r chi.Router) {
-			r.Post("/personal-info", votingHandler.CreatePersonalInfo)
-			r.Post("/vote", votingHandler.SubmitVoteOnly)
-		})
-		
 		// YouTube channel info (no auth required)
 		r.Get("/youtube/channel/{channelId}", subscriptionHandler.GetChannelInfo)
 
@@ -286,8 +276,16 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Auth(authService, log))
 
-			// Personal info routes (auth required)
+			// Personal info and voting endpoints (auth required)
+			r.Post("/personal-info", votingHandler.CreatePersonalInfo)
+			r.Post("/vote", votingHandler.SubmitVoteOnly)
 			r.Get("/personal-info/me", votingHandler.GetPersonalInfoMe)
+			
+			// Add v1/user routes for frontend compatibility (auth required)
+			r.Route("/v1/user", func(r chi.Router) {
+				r.Post("/personal-info", votingHandler.CreatePersonalInfo)
+				r.Post("/vote", votingHandler.SubmitVoteOnly)
+			})
 
 			// User routes
 			r.Route("/user", func(r chi.Router) {

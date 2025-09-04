@@ -19,10 +19,11 @@ type Vote struct {
 	UserID string `json:"user_id"` // This serves as the primary key for the unified table
 	
 	// Personal information fields
-	Phone     string `json:"phone"` // Normalized phone number (unique)
-	FirstName string `json:"first_name"`
-	LastName  string `json:"last_name"`
-	Email     string `json:"email"`
+	Phone         string `json:"phone"` // Normalized phone number (unique)
+	FirstName     string `json:"first_name"`
+	LastName      string `json:"last_name"`
+	Email         string `json:"email"`
+	FavoriteVideo string `json:"favorite_video,omitempty"` // User's favorite video (max 1000 chars, optional)
 	
 	// PDPA compliance fields
 	ConsentPDPA          bool       `json:"consent_pdpa"`
@@ -59,10 +60,11 @@ type VoteRequest struct {
 
 // PersonalInfo represents voter's personal information
 type PersonalInfo struct {
-	FirstName string `json:"first_name" validate:"required,min=2,max=100"`
-	LastName  string `json:"last_name" validate:"required,min=2,max=100"`
-	Email     string `json:"email" validate:"required,email"`
-	Phone     string `json:"phone" validate:"required,min=10,max=20"`
+	FirstName     string `json:"first_name" validate:"required,min=2,max=100"`
+	LastName      string `json:"last_name" validate:"required,min=2,max=100"`
+	Email         string `json:"email" validate:"required,email"`
+	Phone         string `json:"phone" validate:"required,min=10,max=20"`
+	FavoriteVideo string `json:"favorite_video,omitempty" validate:"omitempty,max=1000"`
 }
 
 // ConsentData represents PDPA consent information
@@ -134,23 +136,25 @@ type VoteDistribution struct {
 
 // PersonalInfoRequest represents a request to create/update personal info
 type PersonalInfoRequest struct {
-	FirstName   string `json:"first_name" validate:"required,min=2,max=100"`
-	LastName    string `json:"last_name" validate:"required,min=2,max=100"`
-	Email       string `json:"email" validate:"required,email"`
-	Phone       string `json:"phone" validate:"required,min=10,max=20"`
-	ConsentPDPA bool   `json:"consent_pdpa" validate:"required,eq=true"`
+	FirstName     string `json:"first_name" validate:"required,min=2,max=100"`
+	LastName      string `json:"last_name" validate:"required,min=2,max=100"`
+	Email         string `json:"email" validate:"required,email"`
+	Phone         string `json:"phone" validate:"required,min=10,max=20"`
+	FavoriteVideo string `json:"favorite_video,omitempty" validate:"omitempty,max=1000"`
+	ConsentPDPA   bool   `json:"consent_pdpa" validate:"required,eq=true"`
 }
 
 // PersonalInfoResponse represents the response after creating/updating personal info
 type PersonalInfoResponse struct {
-	UserID    string    `json:"user_id"`
-	FirstName string    `json:"first_name"`
-	LastName  string    `json:"last_name"`
-	Email     string    `json:"email"`
-	Phone     string    `json:"phone"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Message   string    `json:"message"`
+	UserID        string    `json:"user_id"`
+	FirstName     string    `json:"first_name"`
+	LastName      string    `json:"last_name"`
+	Email         string    `json:"email"`
+	Phone         string    `json:"phone"`
+	FavoriteVideo string    `json:"favorite_video,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	Message       string    `json:"message"`
 }
 
 // VoteOnlyRequest represents a request to submit only the vote (no personal info)
@@ -170,14 +174,15 @@ type VoteOnlyResponse struct {
 
 // PersonalInfoMeResponse represents the response for GET /api/personal-info/me
 type PersonalInfoMeResponse struct {
-	UserID        string     `json:"user_id"`
-	Phone         string     `json:"phone"`
-	FirstName     string     `json:"first_name"`
-	LastName      string     `json:"last_name"`
-	Email         string     `json:"email"`
-	ConsentPDPA   bool       `json:"consent_pdpa"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	UserID           string     `json:"user_id"`
+	Phone            string     `json:"phone"`
+	FirstName        string     `json:"first_name"`
+	LastName         string     `json:"last_name"`
+	Email            string     `json:"email"`
+	FavoriteVideo    string     `json:"favorite_video,omitempty"`
+	ConsentPDPA      bool       `json:"consent_pdpa"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 	ConsentTimestamp *time.Time `json:"consent_timestamp,omitempty"`
-	MarketingConsent bool      `json:"marketing_consent"`
+	MarketingConsent bool       `json:"marketing_consent"`
 }

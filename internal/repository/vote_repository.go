@@ -28,10 +28,10 @@ func (r *VoteRepository) CreateVote(ctx context.Context, vote *domain.Vote) erro
 	query := `
 		INSERT INTO votes (
 			vote_id, user_id, team_id, voter_name, voter_email, voter_phone, 
-			ip_address, user_agent, consent_timestamp, consent_ip, 
+			favorite_video, ip_address, user_agent, consent_timestamp, consent_ip, 
 			privacy_policy_version, pdpa_consent, marketing_consent, data_retention_until
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING id, created_at
 	`
 
@@ -42,6 +42,7 @@ func (r *VoteRepository) CreateVote(ctx context.Context, vote *domain.Vote) erro
 		vote.VoterName,
 		vote.VoterEmail,
 		vote.VoterPhone,
+		vote.FavoriteVideo,
 		vote.IPAddress,
 		vote.UserAgent,
 		vote.ConsentTimestamp,
@@ -71,7 +72,7 @@ func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*d
 	var vote domain.Vote
 	query := `
 		SELECT id, vote_id, user_id, team_id, voter_name, voter_email, voter_phone, 
-		       ip_address, user_agent, consent_timestamp, consent_ip,
+		       favorite_video, ip_address, user_agent, consent_timestamp, consent_ip,
 		       privacy_policy_version, pdpa_consent, marketing_consent, 
 		       data_retention_until, created_at
 		FROM votes
@@ -86,6 +87,7 @@ func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*d
 		&vote.VoterName,
 		&vote.VoterEmail,
 		&vote.VoterPhone,
+		&vote.FavoriteVideo,
 		&vote.IPAddress,
 		&vote.UserAgent,
 		&vote.ConsentTimestamp,
@@ -112,7 +114,7 @@ func (r *VoteRepository) GetVoteByVoteID(ctx context.Context, voteID string) (*d
 	var vote domain.Vote
 	query := `
 		SELECT id, vote_id, user_id, team_id, voter_name, voter_email, voter_phone, 
-		       ip_address, user_agent, consent_timestamp, consent_ip,
+		       favorite_video, ip_address, user_agent, consent_timestamp, consent_ip,
 		       privacy_policy_version, pdpa_consent, marketing_consent, 
 		       data_retention_until, created_at
 		FROM votes
@@ -127,6 +129,7 @@ func (r *VoteRepository) GetVoteByVoteID(ctx context.Context, voteID string) (*d
 		&vote.VoterName,
 		&vote.VoterEmail,
 		&vote.VoterPhone,
+		&vote.FavoriteVideo,
 		&vote.IPAddress,
 		&vote.UserAgent,
 		&vote.ConsentTimestamp,
@@ -153,7 +156,7 @@ func (r *VoteRepository) GetVoteByPhone(ctx context.Context, phone string) (*dom
 	var vote domain.Vote
 	query := `
 		SELECT id, vote_id, user_id, team_id, voter_name, voter_email, voter_phone, 
-		       ip_address, user_agent, consent_timestamp, consent_ip,
+		       favorite_video, ip_address, user_agent, consent_timestamp, consent_ip,
 		       privacy_policy_version, pdpa_consent, marketing_consent, 
 		       data_retention_until, created_at
 		FROM votes
@@ -168,6 +171,7 @@ func (r *VoteRepository) GetVoteByPhone(ctx context.Context, phone string) (*dom
 		&vote.VoterName,
 		&vote.VoterEmail,
 		&vote.VoterPhone,
+		&vote.FavoriteVideo,
 		&vote.IPAddress,
 		&vote.UserAgent,
 		&vote.ConsentTimestamp,
@@ -283,22 +287,23 @@ func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, req *domain.Per
 	voteID := r.generateVoteID() // Generate vote_id to satisfy NOT NULL constraint
 	query := `
 		INSERT INTO votes (
-			vote_id, user_id, voter_phone, voter_name, voter_email, 
+			vote_id, user_id, voter_phone, voter_name, voter_email, favorite_video,
 			ip_address, user_agent, consent_timestamp, consent_ip,
 			pdpa_consent, data_retention_until
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (voter_phone) 
 		DO UPDATE SET
 			voter_name = EXCLUDED.voter_name,
 			voter_email = EXCLUDED.voter_email,
+			favorite_video = EXCLUDED.favorite_video,
 			ip_address = EXCLUDED.ip_address,
 			user_agent = EXCLUDED.user_agent,
 			consent_timestamp = EXCLUDED.consent_timestamp,
 			consent_ip = EXCLUDED.consent_ip,
 			pdpa_consent = EXCLUDED.pdpa_consent,
 			data_retention_until = EXCLUDED.data_retention_until
-		RETURNING user_id, voter_phone, voter_name, voter_email, created_at, created_at
+		RETURNING user_id, voter_phone, voter_name, voter_email, favorite_video, created_at, created_at
 	`
 
 	var response domain.PersonalInfoResponse
@@ -309,6 +314,7 @@ func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, req *domain.Per
 		normalizedPhone,
 		fullName,
 		req.Email,
+		req.FavoriteVideo,
 		ipAddress,
 		userAgent,
 		&consentTime,
@@ -320,6 +326,7 @@ func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, req *domain.Per
 		&response.Phone,
 		&fullName, // We'll split this back
 		&response.Email,
+		&response.FavoriteVideo,
 		&response.CreatedAt,
 		&response.UpdatedAt, // This will get the same value as CreatedAt due to the RETURNING clause
 	)
@@ -366,16 +373,17 @@ func (r *VoteRepository) manualUpsertPersonalInfo(ctx context.Context, req *doma
 		// Update existing user
 		updateQuery := `
 			UPDATE votes 
-			SET voter_name = $2, voter_email = $3, ip_address = $4, user_agent = $5,
-			    consent_timestamp = $6, consent_ip = $7, pdpa_consent = $8, data_retention_until = $9
+			SET voter_name = $2, voter_email = $3, favorite_video = $4, ip_address = $5, user_agent = $6,
+			    consent_timestamp = $7, consent_ip = $8, pdpa_consent = $9, data_retention_until = $10
 			WHERE voter_phone = $1
-			RETURNING user_id, voter_phone, voter_name, voter_email, created_at, NOW()
+			RETURNING user_id, voter_phone, voter_name, voter_email, favorite_video, created_at, NOW()
 		`
 
 		err = r.db.Pool.QueryRow(ctx, updateQuery,
 			normalizedPhone,
 			fullName,
 			req.Email,
+			req.FavoriteVideo,
 			ipAddress,
 			userAgent,
 			&consentTime,
@@ -387,6 +395,7 @@ func (r *VoteRepository) manualUpsertPersonalInfo(ctx context.Context, req *doma
 			&response.Phone,
 			&fullName,
 			&response.Email,
+			&response.FavoriteVideo,
 			&response.CreatedAt,
 			&response.UpdatedAt,
 		)
@@ -400,12 +409,12 @@ func (r *VoteRepository) manualUpsertPersonalInfo(ctx context.Context, req *doma
 		voteID := r.generateVoteID() // Generate vote_id to satisfy NOT NULL constraint
 		insertQuery := `
 			INSERT INTO votes (
-				vote_id, user_id, voter_phone, voter_name, voter_email, 
+				vote_id, user_id, voter_phone, voter_name, voter_email, favorite_video,
 				ip_address, user_agent, consent_timestamp, consent_ip,
 				pdpa_consent, data_retention_until
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-			RETURNING user_id, voter_phone, voter_name, voter_email, created_at, created_at
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			RETURNING user_id, voter_phone, voter_name, voter_email, favorite_video, created_at, created_at
 		`
 
 		err = r.db.Pool.QueryRow(ctx, insertQuery,
@@ -414,6 +423,7 @@ func (r *VoteRepository) manualUpsertPersonalInfo(ctx context.Context, req *doma
 			normalizedPhone,
 			fullName,
 			req.Email,
+			req.FavoriteVideo,
 			ipAddress,
 			userAgent,
 			&consentTime,
@@ -425,6 +435,7 @@ func (r *VoteRepository) manualUpsertPersonalInfo(ctx context.Context, req *doma
 			&response.Phone,
 			&fullName,
 			&response.Email,
+			&response.FavoriteVideo,
 			&response.CreatedAt,
 			&response.UpdatedAt,
 		)
@@ -527,7 +538,7 @@ func (r *VoteRepository) UpdateVoteOnly(ctx context.Context, req *domain.VoteOnl
 func (r *VoteRepository) GetUserByPhone(ctx context.Context, normalizedPhone string) (*domain.Vote, error) {
 	var vote domain.Vote
 	query := `
-		SELECT user_id, voter_phone, voter_name, voter_email, 
+		SELECT user_id, voter_phone, voter_name, voter_email, favorite_video,
 		       team_id, ip_address, user_agent,
 		       consent_timestamp, consent_ip, pdpa_consent,
 		       data_retention_until, created_at
@@ -543,6 +554,7 @@ func (r *VoteRepository) GetUserByPhone(ctx context.Context, normalizedPhone str
 		&vote.Phone,
 		&fullName,
 		&vote.Email,
+		&vote.FavoriteVideo,
 		&teamID,
 		&vote.IPAddress,
 		&vote.UserAgent,
@@ -607,7 +619,7 @@ func (r *VoteRepository) generateVoteID() string {
 func (r *VoteRepository) GetPersonalInfoByUserID(ctx context.Context, userID string) (*domain.PersonalInfoMeResponse, error) {
 	query := `
 		SELECT 
-			user_id, voter_phone, voter_name, voter_email, pdpa_consent, 
+			user_id, voter_phone, voter_name, voter_email, favorite_video, pdpa_consent, 
 			created_at, created_at as updated_at, consent_timestamp, marketing_consent
 		FROM votes 
 		WHERE user_id = $1
@@ -622,6 +634,7 @@ func (r *VoteRepository) GetPersonalInfoByUserID(ctx context.Context, userID str
 		&response.Phone,
 		&voterName,
 		&response.Email,
+		&response.FavoriteVideo,
 		&response.ConsentPDPA,
 		&response.CreatedAt,
 		&response.UpdatedAt,
