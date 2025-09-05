@@ -341,6 +341,13 @@ func (h *VotingHandler) respondError(w http.ResponseWriter, status int, message 
 func (h *VotingHandler) CreatePersonalInfo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	// Get user ID from auth context (this endpoint should require authentication)
+	userID := h.getUserID(r)
+	if userID == "" {
+		h.respondError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
 	// Parse request body - handle both nested and flat formats
 	var rawReq json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&rawReq); err != nil {
@@ -388,7 +395,7 @@ func (h *VotingHandler) CreatePersonalInfo(w http.ResponseWriter, r *http.Reques
 	userAgent := r.Header.Get("User-Agent")
 
 	// Create or update personal info
-	response, err := h.votingService.CreateOrUpdatePersonalInfo(ctx, &req, ipAddress, userAgent)
+	response, err := h.votingService.CreateOrUpdatePersonalInfo(ctx, userID, &req, ipAddress, userAgent)
 	if err != nil {
 		// Log the actual error for debugging
 		fmt.Printf("Personal info submission error: %v\n", err)

@@ -438,7 +438,7 @@ func (s *VotingService) HealthCheck(ctx context.Context) error {
 }
 
 // CreateOrUpdatePersonalInfo handles creating or updating personal information
-func (s *VotingService) CreateOrUpdatePersonalInfo(ctx context.Context, req *domain.PersonalInfoRequest, ipAddress, userAgent string) (*domain.PersonalInfoResponse, error) {
+func (s *VotingService) CreateOrUpdatePersonalInfo(ctx context.Context, userID string, req *domain.PersonalInfoRequest, ipAddress, userAgent string) (*domain.PersonalInfoResponse, error) {
 	// Normalize and validate phone number
 	normalizedPhone, err := utils.NormalizePhoneNumber(req.Phone)
 	if err != nil {
@@ -451,7 +451,7 @@ func (s *VotingService) CreateOrUpdatePersonalInfo(ctx context.Context, req *dom
 	}
 
 	// Create or update personal info
-	response, err := s.voteRepo.UpsertPersonalInfo(ctx, req, normalizedPhone, ipAddress, userAgent)
+	response, err := s.voteRepo.UpsertPersonalInfo(ctx, userID, req, normalizedPhone, ipAddress, userAgent)
 	if err != nil {
 		s.logger.Error("Failed to upsert personal info",
 			zap.String("phone", normalizedPhone),

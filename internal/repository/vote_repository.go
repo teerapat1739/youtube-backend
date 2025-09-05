@@ -277,13 +277,13 @@ func (r *VoteRepository) GetTotalVoteCount(ctx context.Context) (int, error) {
 // UpsertPersonalInfo creates or updates personal information based on normalized phone number
 // Returns the user_id (creates new if doesn't exist)
 // This method handles personal info storage WITHOUT requiring vote_id (vote_id is nullable)
-func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, req *domain.PersonalInfoRequest, normalizedPhone, ipAddress, userAgent string) (*domain.PersonalInfoResponse, error) {
+func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, userID string, req *domain.PersonalInfoRequest, normalizedPhone, ipAddress, userAgent string) (*domain.PersonalInfoResponse, error) {
 	consentTime := time.Now()
 	retentionTime := time.Now().AddDate(1, 0, 0) // 1 year from now
 	fullName := fmt.Sprintf("%s %s", req.FirstName, req.LastName)
 
 	// First, try the upsert approach (if unique constraint exists)
-	userID := r.generateUserID()
+	// Use provided userID from auth context instead of generating new one
 	voteID := r.generateVoteID() // Generate vote_id to satisfy NOT NULL constraint
 	query := `
 		INSERT INTO votes (
@@ -333,7 +333,7 @@ func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, req *domain.Per
 
 	// If the unique constraint doesn't exist, fall back to manual upsert logic
 	if err != nil && strings.Contains(err.Error(), "no unique or exclusion constraint") {
-		return r.manualUpsertPersonalInfo(ctx, req, normalizedPhone, ipAddress, userAgent)
+		return r.manualUpsertPersonalInfo(ctx, userID, req, normalizedPhone, ipAddress, userAgent)
 	}
 
 	if err != nil {
@@ -356,7 +356,7 @@ func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, req *domain.Per
 }
 
 // manualUpsertPersonalInfo handles upsert logic when unique constraint doesn't exist
-func (r *VoteRepository) manualUpsertPersonalInfo(ctx context.Context, req *domain.PersonalInfoRequest, normalizedPhone, ipAddress, userAgent string) (*domain.PersonalInfoResponse, error) {
+func (r *VoteRepository) manualUpsertPersonalInfo(ctx context.Context, userID string, req *domain.PersonalInfoRequest, normalizedPhone, ipAddress, userAgent string) (*domain.PersonalInfoResponse, error) {
 	consentTime := time.Now()
 	retentionTime := time.Now().AddDate(1, 0, 0) // 1 year from now
 	fullName := fmt.Sprintf("%s %s", req.FirstName, req.LastName)
@@ -404,8 +404,7 @@ func (r *VoteRepository) manualUpsertPersonalInfo(ctx context.Context, req *doma
 			return nil, fmt.Errorf("failed to update existing user: %w", err)
 		}
 	} else {
-		// Insert new user
-		userID := r.generateUserID()
+		// Insert new user - use provided userID from auth context instead of generating new one
 		voteID := r.generateVoteID() // Generate vote_id to satisfy NOT NULL constraint
 		insertQuery := `
 			INSERT INTO votes (
