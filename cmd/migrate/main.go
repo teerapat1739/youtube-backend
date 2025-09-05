@@ -88,9 +88,15 @@ func main() {
 		}
 		fmt.Println("✅ Phone constraint fix migration completed successfully")
 
+	case "add-team-image":
+		if err := runAddTeamImageMigration(ctx, conn); err != nil {
+			log.Fatalf("Failed to run add team image migration: %v", err)
+		}
+		fmt.Println("✅ Team image migration completed successfully")
+
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
-		fmt.Println("Usage: go run main.go [drop|up|seed|cleanup|phone-migration|welcome-tracking|fix-vote-id|fix-phone-constraint]")
+		fmt.Println("Usage: go run main.go [drop|up|seed|cleanup|phone-migration|welcome-tracking|fix-vote-id|fix-phone-constraint|add-team-image]")
 		os.Exit(1)
 	}
 }
@@ -206,17 +212,21 @@ func createTables(ctx context.Context, conn *pgx.Conn) error {
 func seedData(ctx context.Context, conn *pgx.Conn) error {
 	// Insert team data
 	query := `
-		INSERT INTO teams (code, name, description, icon, member_count) VALUES
-		('team-alpha', 'ทีม Alpha', 'นวัตกรรมเพื่ออนาคต', '🚀', 45),
-		('team-beta', 'ทีม Beta', 'ความคิดสร้างสรรค์ไร้ขีดจำกัด', '🎨', 38),
-		('team-gamma', 'ทีม Gamma', 'พลังแห่งความร่วมมือ', '🤝', 52),
-		('team-delta', 'ทีม Delta', 'ความเป็นเลิศในทุกมิติ', '⭐', 41),
-		('team-epsilon', 'ทีม Epsilon', 'สู่ความยั่งยืน', '🌱', 33)
+		INSERT INTO teams (code, name, description, icon, member_count, image_filename) VALUES
+		('team-alpha', 'ทีม Alpha', 'นวัตกรรมเพื่ออนาคต', '🚀', 45, 'team-1.png'),
+		('team-beta', 'ทีม Beta', 'ความคิดสร้างสรรค์ไร้ขีดจำกัด', '🎨', 38, 'team-2.png'),
+		('team-gamma', 'ทีม Gamma', 'พลังแห่งความร่วมมือ', '🤝', 52, 'team-3.png'),
+		('team-delta', 'ทีม Delta', 'ความเป็นเลิศในทุกมิติ', '⭐', 41, 'team-4.png'),
+		('team-epsilon', 'ทีม Epsilon', 'สู่ความยั่งยืน', '🌱', 33, 'team-5.png'),
+		('team-zeta', 'ทีม Zeta', 'พลังแห่งการเปลี่ยนแปลง', '💡', 47, 'team-6.png'),
+		('team-eta', 'ทีม Eta', 'ความสำเร็จที่ยั่งยืน', '🏆', 36, 'team-7.png'),
+		('team-theta', 'ทีม Theta', 'ร่วมสร้างอนาคต', '🌟', 44, 'team-8.png')
 		ON CONFLICT (code) DO UPDATE SET
 			name = EXCLUDED.name,
 			description = EXCLUDED.description,
 			icon = EXCLUDED.icon,
 			member_count = EXCLUDED.member_count,
+			image_filename = EXCLUDED.image_filename,
 			updated_at = NOW()
 	`
 
@@ -224,7 +234,7 @@ func seedData(ctx context.Context, conn *pgx.Conn) error {
 		return fmt.Errorf("failed to seed teams: %w", err)
 	}
 
-	fmt.Println("  Seeded 5 teams")
+	fmt.Println("  Seeded 8 teams")
 
 	// Refresh materialized view
 	if _, err := conn.Exec(ctx, "REFRESH MATERIALIZED VIEW vote_summary"); err != nil {
@@ -342,6 +352,31 @@ func runFixPhoneConstraint(ctx context.Context, conn *pgx.Conn) error {
 	fmt.Println("  ✅ Phone constraint recreated to handle NULL values properly")
 	fmt.Println("  ✅ Check constraint added to prevent empty strings")
 	fmt.Println("  ✅ Multiple users can now accept welcome without phone conflicts")
+
+	return nil
+}
+
+func runAddTeamImageMigration(ctx context.Context, conn *pgx.Conn) error {
+	// Read the migration SQL file
+	sqlFile := "migrations/add_team_image.sql"
+	if _, err := os.Stat(sqlFile); os.IsNotExist(err) {
+		return fmt.Errorf("migration file not found: %s", sqlFile)
+	}
+
+	sqlBytes, err := ioutil.ReadFile(sqlFile)
+	if err != nil {
+		return fmt.Errorf("failed to read migration file: %w", err)
+	}
+
+	// Execute the migration SQL
+	_, err = conn.Exec(ctx, string(sqlBytes))
+	if err != nil {
+		return fmt.Errorf("failed to execute add team image migration: %w", err)
+	}
+
+	fmt.Println("  ✅ Added image_filename column to teams table")
+	fmt.Println("  ✅ Updated team records with image filenames")
+	fmt.Println("  ✅ Materialized view updated to include image filenames")
 
 	return nil
 }

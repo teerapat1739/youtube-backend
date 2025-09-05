@@ -288,7 +288,7 @@ func (r *VoteRepository) GetVoteByPhone(ctx context.Context, phone string) (*dom
 // GetTeamsWithVoteCounts gets all teams with their vote counts
 func (r *VoteRepository) GetTeamsWithVoteCounts(ctx context.Context) ([]domain.Team, error) {
 	query := `
-		SELECT id, code, name, description, icon, member_count, vote_count, last_vote_at
+		SELECT id, code, name, description, icon, image_filename, member_count, vote_count, last_vote_at
 		FROM vote_summary
 		ORDER BY vote_count DESC, name ASC
 	`
@@ -302,16 +302,21 @@ func (r *VoteRepository) GetTeamsWithVoteCounts(ctx context.Context) ([]domain.T
 	var teams []domain.Team
 	for rows.Next() {
 		var team domain.Team
+		var imageFilename sql.NullString
 		err := rows.Scan(
 			&team.ID,
 			&team.Code,
 			&team.Name,
 			&team.Description,
 			&team.Icon,
+			&imageFilename,
 			&team.MemberCount,
 			&team.VoteCount,
 			&team.LastVoteAt,
 		)
+		if imageFilename.Valid {
+			team.ImageFilename = imageFilename.String
+		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan team: %w", err)
 		}
