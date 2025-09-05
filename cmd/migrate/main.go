@@ -25,7 +25,7 @@ func main() {
 
 	// Get command
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run main.go [drop|up|seed|cleanup|phone-migration|welcome-tracking]")
+		fmt.Println("Usage: go run main.go [drop|up|seed|cleanup|phone-migration|welcome-tracking|fix-vote-id]")
 		os.Exit(1)
 	}
 
@@ -76,9 +76,21 @@ func main() {
 		}
 		fmt.Println("✅ Welcome tracking migration completed successfully")
 
+	case "fix-vote-id":
+		if err := runVoteIdConstraintFix(ctx, conn); err != nil {
+			log.Fatalf("Failed to run vote_id constraint fix migration: %v", err)
+		}
+		fmt.Println("✅ Vote ID constraint fix migration completed successfully")
+
+	case "fix-phone-constraint":
+		if err := runFixPhoneConstraint(ctx, conn); err != nil {
+			log.Fatalf("Failed to run phone constraint fix migration: %v", err)
+		}
+		fmt.Println("✅ Phone constraint fix migration completed successfully")
+
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
-		fmt.Println("Usage: go run main.go [drop|up|seed|cleanup|phone-migration|welcome-tracking]")
+		fmt.Println("Usage: go run main.go [drop|up|seed|cleanup|phone-migration|welcome-tracking|fix-vote-id|fix-phone-constraint]")
 		os.Exit(1)
 	}
 }
@@ -278,6 +290,58 @@ func runWelcomeTrackingMigration(ctx context.Context, conn *pgx.Conn) error {
 	fmt.Println("  ✅ Index on welcome_accepted column created")
 	fmt.Println("  ✅ Composite index on user_id and welcome_accepted created")
 	fmt.Println("  ✅ Column comments added for documentation")
+
+	return nil
+}
+
+func runVoteIdConstraintFix(ctx context.Context, conn *pgx.Conn) error {
+	// Read the migration SQL file
+	sqlFile := "migrations/fix_vote_id_constraint.sql"
+	if _, err := os.Stat(sqlFile); os.IsNotExist(err) {
+		return fmt.Errorf("migration file not found: %s", sqlFile)
+	}
+
+	sqlBytes, err := ioutil.ReadFile(sqlFile)
+	if err != nil {
+		return fmt.Errorf("failed to read migration file: %w", err)
+	}
+
+	// Execute the migration SQL
+	_, err = conn.Exec(ctx, string(sqlBytes))
+	if err != nil {
+		return fmt.Errorf("failed to execute vote_id constraint fix migration: %w", err)
+	}
+
+	fmt.Println("  ✅ Vote ID column made nullable")
+	fmt.Println("  ✅ Unique constraint updated to allow NULL values")
+	fmt.Println("  ✅ Check constraint added: vote_id required when team_id is set")
+	fmt.Println("  ✅ Data integrity maintained for actual votes")
+
+	return nil
+}
+
+func runFixPhoneConstraint(ctx context.Context, conn *pgx.Conn) error {
+	// Read the migration SQL file
+	sqlFile := "migrations/fix_unique_phone_constraint.sql"
+	if _, err := os.Stat(sqlFile); os.IsNotExist(err) {
+		return fmt.Errorf("migration file not found: %s", sqlFile)
+	}
+
+	sqlBytes, err := ioutil.ReadFile(sqlFile)
+	if err != nil {
+		return fmt.Errorf("failed to read migration file: %w", err)
+	}
+
+	// Execute the migration SQL
+	_, err = conn.Exec(ctx, string(sqlBytes))
+	if err != nil {
+		return fmt.Errorf("failed to execute phone constraint fix migration: %w", err)
+	}
+
+	fmt.Println("  ✅ Empty phone values converted to NULL")
+	fmt.Println("  ✅ Phone constraint recreated to handle NULL values properly")
+	fmt.Println("  ✅ Check constraint added to prevent empty strings")
+	fmt.Println("  ✅ Multiple users can now accept welcome without phone conflicts")
 
 	return nil
 }

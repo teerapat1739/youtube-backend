@@ -655,3 +655,60 @@ func (s *VotingService) GetWelcomeAcceptance(ctx context.Context, userID string)
 func (s *VotingService) GetPersonalInfoByUserID(ctx context.Context, userID string) (*domain.PersonalInfoMeResponse, error) {
 	return s.voteRepo.GetPersonalInfoByUserID(ctx, userID)
 }
+
+// GetUserStatus determines the user's current step in the voting process
+func (s *VotingService) GetUserStatus(ctx context.Context, userID string) (*domain.UserStatusResponse, error) {
+	// Get user record from database
+	userRecord, err := s.voteRepo.GetVoteByUserID(ctx, userID)
+	if err != nil {
+		s.logger.Error("Failed to get user record for status check",
+			zap.String("user_id", userID),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to get user record: %w", err)
+	}
+
+	response := &domain.UserStatusResponse{
+		UserID:            userID,
+		WelcomeAccepted:   false,
+		HasPersonalInfo:   false,
+		HasVoted:          false,
+		CurrentStep:       "welcome",
+	}
+
+	// If no record exists, user needs to accept welcome
+	if userRecord == nil {
+		return response, nil
+	}
+
+	// Check welcome acceptance from the database record
+	response.WelcomeAccepted = userRecord.WelcomeAccepted
+
+	// Determine current step based on completed actions
+	if !response.WelcomeAccepted {
+		response.CurrentStep = "welcome"
+	} else {
+		// Check if user has personal info (phone number is required field)
+		if userRecord.Phone != "" || userRecord.VoterPhone != "" {
+			response.HasPersonalInfo = true
+			
+			// Check if user has voted (vote_id exists and team_id/candidate_id is set)
+			if userRecord.VoteID != "" && (userRecord.TeamID > 0 || userRecord.CandidateID > 0) {
+				response.HasVoted = true
+				response.CurrentStep = "complete"
+			} else {
+				response.CurrentStep = "vote"
+			}
+		} else {
+			response.CurrentStep = "personal-info"
+		}
+	}
+
+	s.logger.Debug("User status determined",
+		zap.String("user_id", userID),
+		zap.Bool("welcome_accepted", response.WelcomeAccepted),
+		zap.Bool("has_personal_info", response.HasPersonalInfo),
+		zap.Bool("has_voted", response.HasVoted),
+		zap.String("current_step", response.CurrentStep))
+
+	return response, nil
+}

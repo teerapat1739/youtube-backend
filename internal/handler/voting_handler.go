@@ -567,6 +567,28 @@ func (h *VotingHandler) AcceptWelcome(w http.ResponseWriter, r *http.Request) {
 	h.respondJSON(w, http.StatusOK, response)
 }
 
+// GetUserStatus handles GET /api/user/status - determines where to redirect user after login
+func (h *VotingHandler) GetUserStatus(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get user ID from auth context (this endpoint requires authentication)
+	userID := h.getUserID(r)
+	if userID == "" {
+		h.respondError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	// Get user status from the voting service
+	status, err := h.votingService.GetUserStatus(ctx, userID)
+	if err != nil {
+		fmt.Printf("[ERROR] GetUserStatus: Failed to get user status for userID '%s': %v\n", userID, err)
+		h.respondError(w, http.StatusInternalServerError, "Failed to retrieve user status")
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, status)
+}
+
 // GetPersonalInfoMe handles GET /api/personal-info/me
 func (h *VotingHandler) GetPersonalInfoMe(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()

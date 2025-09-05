@@ -37,6 +37,11 @@ type Vote struct {
 	CandidateID int        `json:"candidate_id,omitempty"` // 0 means no vote cast yet
 	VotedAt     *time.Time `json:"voted_at,omitempty"`
 
+	// Welcome/Rules acceptance fields
+	WelcomeAccepted   bool       `json:"welcome_accepted"`
+	WelcomeAcceptedAt *time.Time `json:"welcome_accepted_at,omitempty"`
+	RulesVersion      string     `json:"rules_version,omitempty"`
+
 	// Audit fields
 	IPAddress string    `json:"ip_address,omitempty"`
 	UserAgent string    `json:"user_agent,omitempty"`
@@ -213,4 +218,13 @@ type PersonalInfoMeResponse struct {
 	WelcomeAccepted   bool       `json:"welcome_accepted"`
 	WelcomeAcceptedAt *time.Time `json:"welcome_accepted_at,omitempty"`
 	RulesVersion      string     `json:"rules_version,omitempty"`
+}
+
+// UserStatusResponse represents the response for GET /api/user/status
+type UserStatusResponse struct {
+	UserID            string `json:"user_id"`
+	WelcomeAccepted   bool   `json:"welcome_accepted"`
+	HasPersonalInfo   bool   `json:"has_personal_info"`
+	HasVoted          bool   `json:"has_voted"`
+	CurrentStep       string `json:"current_step"` // welcome, personal-info, vote, complete
 }

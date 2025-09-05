@@ -293,6 +293,7 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 			// User routes
 			r.Route("/user", func(r chi.Router) {
 				r.Get("/profile", authHandler.GetProfile)
+				r.Get("/status", votingHandler.GetUserStatus)
 			})
 
 			// YouTube routes

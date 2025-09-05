@@ -70,6 +70,7 @@ func (r *VoteRepository) CreateVote(ctx context.Context, vote *domain.Vote) erro
 // GetVoteByUserID gets a vote by user ID
 func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*domain.Vote, error) {
 	var vote domain.Vote
+	var voteID sql.NullString // Handle nullable vote_id
 	var teamID sql.NullInt32
 	var voterName sql.NullString
 	var voterEmail sql.NullString
@@ -81,19 +82,22 @@ func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*d
 	var consentIP sql.NullString
 	var privacyPolicyVersion sql.NullString
 	var dataRetentionUntil sql.NullTime
+	var welcomeAcceptedAt sql.NullTime
+	var rulesVersion sql.NullString
 	
 	query := `
 		SELECT id, vote_id, user_id, team_id, voter_name, voter_email, voter_phone, 
 		       favorite_video, ip_address, user_agent, consent_timestamp, consent_ip,
 		       privacy_policy_version, pdpa_consent, marketing_consent, 
-		       data_retention_until, created_at
+		       data_retention_until, created_at,
+		       welcome_accepted, welcome_accepted_at, rules_version
 		FROM votes
 		WHERE user_id = $1
 	`
 
 	err := r.db.Pool.QueryRow(ctx, query, userID).Scan(
 		&vote.ID,
-		&vote.VoteID,
+		&voteID, // Use nullable version
 		&vote.UserID,
 		&teamID,
 		&voterName,
@@ -109,6 +113,9 @@ func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*d
 		&vote.MarketingConsent,
 		&dataRetentionUntil,
 		&vote.CreatedAt,
+		&vote.WelcomeAccepted,
+		&welcomeAcceptedAt,
+		&rulesVersion,
 	)
 
 	if err == pgx.ErrNoRows {
@@ -119,6 +126,9 @@ func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*d
 	}
 
 	// Handle nullable fields
+	if voteID.Valid {
+		vote.VoteID = voteID.String
+	}
 	if teamID.Valid {
 		vote.TeamID = int(teamID.Int32)
 		vote.CandidateID = int(teamID.Int32)
@@ -162,6 +172,12 @@ func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*d
 	}
 	if dataRetentionUntil.Valid {
 		vote.DataRetentionUntil = &dataRetentionUntil.Time
+	}
+	if welcomeAcceptedAt.Valid {
+		vote.WelcomeAcceptedAt = &welcomeAcceptedAt.Time
+	}
+	if rulesVersion.Valid {
+		vote.RulesVersion = rulesVersion.String
 	}
 
 	return &vote, nil
@@ -219,6 +235,7 @@ func (r *VoteRepository) GetVoteByVoteID(ctx context.Context, voteID string) (*d
 // GetVoteByPhone gets a vote by phone number
 func (r *VoteRepository) GetVoteByPhone(ctx context.Context, phone string) (*domain.Vote, error) {
 	var vote domain.Vote
+	var voteID sql.NullString // Handle nullable vote_id
 	var teamID sql.NullInt32
 	query := `
 		SELECT id, vote_id, user_id, team_id, voter_name, voter_email, voter_phone, 
@@ -231,7 +248,7 @@ func (r *VoteRepository) GetVoteByPhone(ctx context.Context, phone string) (*dom
 
 	err := r.db.Pool.QueryRow(ctx, query, phone).Scan(
 		&vote.ID,
-		&vote.VoteID,
+		&voteID, // Use nullable version
 		&vote.UserID,
 		&teamID,
 		&vote.VoterName,
@@ -256,7 +273,10 @@ func (r *VoteRepository) GetVoteByPhone(ctx context.Context, phone string) (*dom
 		return nil, fmt.Errorf("failed to get vote by phone: %w", err)
 	}
 
-	// Handle nullable team_id
+	// Handle nullable fields
+	if voteID.Valid {
+		vote.VoteID = voteID.String
+	}
 	if teamID.Valid {
 		vote.TeamID = int(teamID.Int32)
 		vote.CandidateID = int(teamID.Int32)
@@ -410,20 +430,18 @@ func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, userID string, 
 			return nil, fmt.Errorf("failed to update existing user: %w", err)
 		}
 	} else {
-		// User doesn't exist - create new record
-		voteID := r.generateVoteID()
+		// User doesn't exist - create new record WITHOUT vote_id (vote_id should only be created when actually voting)
 		insertQuery := `
 			INSERT INTO votes (
-				vote_id, user_id, voter_phone, voter_name, voter_email, favorite_video,
+				user_id, voter_phone, voter_name, voter_email, favorite_video,
 				ip_address, user_agent, consent_timestamp, consent_ip,
 				pdpa_consent, data_retention_until
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 			RETURNING user_id, voter_phone, voter_name, voter_email, favorite_video, created_at, created_at
 		`
 
 		err = r.db.Pool.QueryRow(ctx, insertQuery,
-			voteID,
 			userID,
 			normalizedPhone,
 			fullName,
@@ -633,25 +651,22 @@ func (r *VoteRepository) SaveWelcomeAcceptance(ctx context.Context, userID, rule
 
 	// If no rows were affected, user doesn't exist yet - create new record
 	if result.RowsAffected() == 0 {
-		// Generate a vote_id for the new record (required by schema)
-		voteID := r.generateVoteID()
-		
+		// DO NOT create vote_id during welcome acceptance - only when user actually votes
 		// Include empty strings for required NOT NULL fields (voter_name, voter_email)
 		// These will be filled when user submits personal info
 		insertQuery := `
 			INSERT INTO votes (
-				vote_id, user_id, voter_name, voter_email, voter_phone,
+				user_id, voter_name, voter_email, voter_phone,
 				welcome_accepted, welcome_accepted_at, rules_version
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
 		`
 
 		_, err = r.db.Pool.Exec(ctx, insertQuery, 
-			voteID,        // vote_id
 			userID,        // user_id
 			"",           // voter_name (empty, will be filled later)
 			"",           // voter_email (empty, will be filled later)
-			"",           // voter_phone (empty, will be filled later)
+			nil,          // voter_phone (NULL, will be filled later - avoids unique constraint)
 			true,         // welcome_accepted
 			acceptedAt,   // welcome_accepted_at
 			rulesVersion, // rules_version
