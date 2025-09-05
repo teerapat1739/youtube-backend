@@ -70,6 +70,18 @@ func (r *VoteRepository) CreateVote(ctx context.Context, vote *domain.Vote) erro
 // GetVoteByUserID gets a vote by user ID
 func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*domain.Vote, error) {
 	var vote domain.Vote
+	var teamID sql.NullInt32
+	var voterName sql.NullString
+	var voterEmail sql.NullString
+	var voterPhone sql.NullString
+	var favoriteVideo sql.NullString
+	var ipAddress sql.NullString
+	var userAgent sql.NullString
+	var consentTimestamp sql.NullTime
+	var consentIP sql.NullString
+	var privacyPolicyVersion sql.NullString
+	var dataRetentionUntil sql.NullTime
+	
 	query := `
 		SELECT id, vote_id, user_id, team_id, voter_name, voter_email, voter_phone, 
 		       favorite_video, ip_address, user_agent, consent_timestamp, consent_ip,
@@ -83,19 +95,19 @@ func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*d
 		&vote.ID,
 		&vote.VoteID,
 		&vote.UserID,
-		&vote.TeamID,
-		&vote.VoterName,
-		&vote.VoterEmail,
-		&vote.VoterPhone,
-		&vote.FavoriteVideo,
-		&vote.IPAddress,
-		&vote.UserAgent,
-		&vote.ConsentTimestamp,
-		&vote.ConsentIP,
-		&vote.PrivacyPolicyVersion,
+		&teamID,
+		&voterName,
+		&voterEmail,
+		&voterPhone,
+		&favoriteVideo,
+		&ipAddress,
+		&userAgent,
+		&consentTimestamp,
+		&consentIP,
+		&privacyPolicyVersion,
 		&vote.ConsentPDPA,
 		&vote.MarketingConsent,
-		&vote.DataRetentionUntil,
+		&dataRetentionUntil,
 		&vote.CreatedAt,
 	)
 
@@ -106,12 +118,59 @@ func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*d
 		return nil, fmt.Errorf("failed to get vote: %w", err)
 	}
 
+	// Handle nullable fields
+	if teamID.Valid {
+		vote.TeamID = int(teamID.Int32)
+		vote.CandidateID = int(teamID.Int32)
+	}
+	if voterName.Valid {
+		vote.VoterName = voterName.String
+		// Parse full name
+		names := strings.Fields(voterName.String)
+		if len(names) >= 2 {
+			vote.FirstName = names[0]
+			vote.LastName = strings.Join(names[1:], " ")
+		} else if len(names) == 1 {
+			vote.FirstName = names[0]
+		}
+	}
+	if voterEmail.Valid {
+		vote.VoterEmail = voterEmail.String
+		vote.Email = voterEmail.String
+	}
+	if voterPhone.Valid {
+		vote.VoterPhone = voterPhone.String
+		vote.Phone = voterPhone.String
+	}
+	if favoriteVideo.Valid {
+		vote.FavoriteVideo = favoriteVideo.String
+	}
+	if ipAddress.Valid {
+		vote.IPAddress = ipAddress.String
+	}
+	if userAgent.Valid {
+		vote.UserAgent = userAgent.String
+	}
+	if consentTimestamp.Valid {
+		vote.ConsentTimestamp = &consentTimestamp.Time
+	}
+	if consentIP.Valid {
+		vote.ConsentIP = consentIP.String
+	}
+	if privacyPolicyVersion.Valid {
+		vote.PrivacyPolicyVersion = privacyPolicyVersion.String
+	}
+	if dataRetentionUntil.Valid {
+		vote.DataRetentionUntil = &dataRetentionUntil.Time
+	}
+
 	return &vote, nil
 }
 
 // GetVoteByVoteID gets a vote by vote ID
 func (r *VoteRepository) GetVoteByVoteID(ctx context.Context, voteID string) (*domain.Vote, error) {
 	var vote domain.Vote
+	var teamID sql.NullInt32
 	query := `
 		SELECT id, vote_id, user_id, team_id, voter_name, voter_email, voter_phone, 
 		       favorite_video, ip_address, user_agent, consent_timestamp, consent_ip,
@@ -125,7 +184,7 @@ func (r *VoteRepository) GetVoteByVoteID(ctx context.Context, voteID string) (*d
 		&vote.ID,
 		&vote.VoteID,
 		&vote.UserID,
-		&vote.TeamID,
+		&teamID,
 		&vote.VoterName,
 		&vote.VoterEmail,
 		&vote.VoterPhone,
@@ -148,12 +207,19 @@ func (r *VoteRepository) GetVoteByVoteID(ctx context.Context, voteID string) (*d
 		return nil, fmt.Errorf("failed to get vote by ID: %w", err)
 	}
 
+	// Handle nullable team_id
+	if teamID.Valid {
+		vote.TeamID = int(teamID.Int32)
+		vote.CandidateID = int(teamID.Int32)
+	}
+
 	return &vote, nil
 }
 
 // GetVoteByPhone gets a vote by phone number
 func (r *VoteRepository) GetVoteByPhone(ctx context.Context, phone string) (*domain.Vote, error) {
 	var vote domain.Vote
+	var teamID sql.NullInt32
 	query := `
 		SELECT id, vote_id, user_id, team_id, voter_name, voter_email, voter_phone, 
 		       favorite_video, ip_address, user_agent, consent_timestamp, consent_ip,
@@ -167,7 +233,7 @@ func (r *VoteRepository) GetVoteByPhone(ctx context.Context, phone string) (*dom
 		&vote.ID,
 		&vote.VoteID,
 		&vote.UserID,
-		&vote.TeamID,
+		&teamID,
 		&vote.VoterName,
 		&vote.VoterEmail,
 		&vote.VoterPhone,
@@ -188,6 +254,12 @@ func (r *VoteRepository) GetVoteByPhone(ctx context.Context, phone string) (*dom
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get vote by phone: %w", err)
+	}
+
+	// Handle nullable team_id
+	if teamID.Valid {
+		vote.TeamID = int(teamID.Int32)
+		vote.CandidateID = int(teamID.Int32)
 	}
 
 	return &vote, nil
@@ -274,112 +346,46 @@ func (r *VoteRepository) GetTotalVoteCount(ctx context.Context) (int, error) {
 	return count, nil
 }
 
-// UpsertPersonalInfo creates or updates personal information based on normalized phone number
-// Returns the user_id (creates new if doesn't exist)
-// This method handles personal info storage WITHOUT requiring vote_id (vote_id is nullable)
+// UpsertPersonalInfo creates or updates personal information for the authenticated user
+// This method handles personal info storage for users who may have already accepted welcome (have existing record)
+// It ensures phone number uniqueness while allowing the current user to update their own information
 func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, userID string, req *domain.PersonalInfoRequest, normalizedPhone, ipAddress, userAgent string) (*domain.PersonalInfoResponse, error) {
 	consentTime := time.Now()
 	retentionTime := time.Now().AddDate(1, 0, 0) // 1 year from now
 	fullName := fmt.Sprintf("%s %s", req.FirstName, req.LastName)
 
-	// First, try the upsert approach (if unique constraint exists)
-	// Use provided userID from auth context instead of generating new one
-	voteID := r.generateVoteID() // Generate vote_id to satisfy NOT NULL constraint
-	query := `
-		INSERT INTO votes (
-			vote_id, user_id, voter_phone, voter_name, voter_email, favorite_video,
-			ip_address, user_agent, consent_timestamp, consent_ip,
-			pdpa_consent, data_retention_until
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		ON CONFLICT (voter_phone) 
-		DO UPDATE SET
-			voter_name = EXCLUDED.voter_name,
-			voter_email = EXCLUDED.voter_email,
-			favorite_video = EXCLUDED.favorite_video,
-			ip_address = EXCLUDED.ip_address,
-			user_agent = EXCLUDED.user_agent,
-			consent_timestamp = EXCLUDED.consent_timestamp,
-			consent_ip = EXCLUDED.consent_ip,
-			pdpa_consent = EXCLUDED.pdpa_consent,
-			data_retention_until = EXCLUDED.data_retention_until
-		RETURNING user_id, voter_phone, voter_name, voter_email, favorite_video, created_at, created_at
-	`
-
-	var response domain.PersonalInfoResponse
-
-	err := r.db.Pool.QueryRow(ctx, query,
-		voteID,
-		userID,
-		normalizedPhone,
-		fullName,
-		req.Email,
-		req.FavoriteVideo,
-		ipAddress,
-		userAgent,
-		&consentTime,
-		ipAddress,
-		req.ConsentPDPA,
-		&retentionTime,
-	).Scan(
-		&response.UserID,
-		&response.Phone,
-		&fullName, // We'll split this back
-		&response.Email,
-		&response.FavoriteVideo,
-		&response.CreatedAt,
-		&response.UpdatedAt, // This will get the same value as CreatedAt due to the RETURNING clause
-	)
-
-	// If the unique constraint doesn't exist, fall back to manual upsert logic
-	if err != nil && strings.Contains(err.Error(), "no unique or exclusion constraint") {
-		return r.manualUpsertPersonalInfo(ctx, userID, req, normalizedPhone, ipAddress, userAgent)
-	}
-
+	// First, check if the current user already has a record
+	existingUserRecord, err := r.GetVoteByUserID(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to upsert personal info: %w", err)
+		return nil, fmt.Errorf("failed to check existing user record: %w", err)
 	}
 
-	// Split the full name back (simple approach)
-	names := strings.Fields(fullName)
-	if len(names) >= 2 {
-		response.FirstName = names[0]
-		response.LastName = strings.Join(names[1:], " ")
-	} else {
-		response.FirstName = fullName
-		response.LastName = ""
-	}
-
-	response.Message = "Personal information saved successfully"
-
-	return &response, nil
-}
-
-// manualUpsertPersonalInfo handles upsert logic when unique constraint doesn't exist
-func (r *VoteRepository) manualUpsertPersonalInfo(ctx context.Context, userID string, req *domain.PersonalInfoRequest, normalizedPhone, ipAddress, userAgent string) (*domain.PersonalInfoResponse, error) {
-	consentTime := time.Now()
-	retentionTime := time.Now().AddDate(1, 0, 0) // 1 year from now
-	fullName := fmt.Sprintf("%s %s", req.FirstName, req.LastName)
-
-	// First, try to find existing user by phone
-	existingUser, err := r.GetUserByPhone(ctx, normalizedPhone)
+	// Check if phone number is already used by another user (not the current user)
+	existingPhoneUser, err := r.GetUserByPhone(ctx, normalizedPhone)
 	if err != nil {
-		return nil, fmt.Errorf("failed to check existing user: %w", err)
+		return nil, fmt.Errorf("failed to check phone uniqueness: %w", err)
+	}
+
+	// If phone is used by another user (different userID), reject the request
+	if existingPhoneUser != nil && existingPhoneUser.UserID != userID {
+		return nil, fmt.Errorf("phone number already registered by another user")
 	}
 
 	var response domain.PersonalInfoResponse
 
-	if existingUser != nil {
-		// Update existing user
+	if existingUserRecord != nil {
+		// User exists (from welcome acceptance or previous submission) - update their record
 		updateQuery := `
 			UPDATE votes 
-			SET voter_name = $2, voter_email = $3, favorite_video = $4, ip_address = $5, user_agent = $6,
-			    consent_timestamp = $7, consent_ip = $8, pdpa_consent = $9, data_retention_until = $10
-			WHERE voter_phone = $1
+			SET voter_phone = $2, voter_name = $3, voter_email = $4, favorite_video = $5, 
+			    ip_address = $6, user_agent = $7, consent_timestamp = $8, consent_ip = $9,
+			    pdpa_consent = $10, data_retention_until = $11
+			WHERE user_id = $1
 			RETURNING user_id, voter_phone, voter_name, voter_email, favorite_video, created_at, NOW()
 		`
 
 		err = r.db.Pool.QueryRow(ctx, updateQuery,
+			userID,
 			normalizedPhone,
 			fullName,
 			req.Email,
@@ -404,8 +410,8 @@ func (r *VoteRepository) manualUpsertPersonalInfo(ctx context.Context, userID st
 			return nil, fmt.Errorf("failed to update existing user: %w", err)
 		}
 	} else {
-		// Insert new user - use provided userID from auth context instead of generating new one
-		voteID := r.generateVoteID() // Generate vote_id to satisfy NOT NULL constraint
+		// User doesn't exist - create new record
+		voteID := r.generateVoteID()
 		insertQuery := `
 			INSERT INTO votes (
 				vote_id, user_id, voter_phone, voter_name, voter_email, favorite_video,
@@ -444,7 +450,7 @@ func (r *VoteRepository) manualUpsertPersonalInfo(ctx context.Context, userID st
 		}
 	}
 
-	// Split the full name back (simple approach)
+	// Split the full name back
 	names := strings.Fields(fullName)
 	if len(names) >= 2 {
 		response.FirstName = names[0]
@@ -458,6 +464,7 @@ func (r *VoteRepository) manualUpsertPersonalInfo(ctx context.Context, userID st
 
 	return &response, nil
 }
+
 
 // UpdateVoteOnly updates only the vote-related fields for an existing user
 func (r *VoteRepository) UpdateVoteOnly(ctx context.Context, req *domain.VoteOnlyRequest) (*domain.VoteOnlyResponse, error) {
@@ -596,15 +603,6 @@ func (r *VoteRepository) GetUserByPhone(ctx context.Context, normalizedPhone str
 	return &vote, nil
 }
 
-// generateUserID generates a unique user ID
-func (r *VoteRepository) generateUserID() string {
-	year := time.Now().Year()
-	bytes := make([]byte, 4)
-	rand.Read(bytes)
-	random := hex.EncodeToString(bytes)
-	return fmt.Sprintf("USR%d%s", year, random)
-}
-
 // generateVoteID generates a unique vote ID
 func (r *VoteRepository) generateVoteID() string {
 	year := time.Now().Year()
@@ -614,12 +612,101 @@ func (r *VoteRepository) generateVoteID() string {
 	return fmt.Sprintf("VOTE%d%s", year, strings.ToUpper(random))
 }
 
+// SaveWelcomeAcceptance saves welcome/rules acceptance to database
+// Creates a new record if user doesn't exist, or updates existing record
+func (r *VoteRepository) SaveWelcomeAcceptance(ctx context.Context, userID, rulesVersion string) error {
+	acceptedAt := time.Now()
+
+	// First, try to update existing record
+	updateQuery := `
+		UPDATE votes 
+		SET welcome_accepted = true,
+		    welcome_accepted_at = $2,
+		    rules_version = $3
+		WHERE user_id = $1
+	`
+
+	result, err := r.db.Pool.Exec(ctx, updateQuery, userID, acceptedAt, rulesVersion)
+	if err != nil {
+		return fmt.Errorf("failed to save welcome acceptance: %w", err)
+	}
+
+	// If no rows were affected, user doesn't exist yet - create new record
+	if result.RowsAffected() == 0 {
+		// Generate a vote_id for the new record (required by schema)
+		voteID := r.generateVoteID()
+		
+		// Include empty strings for required NOT NULL fields (voter_name, voter_email)
+		// These will be filled when user submits personal info
+		insertQuery := `
+			INSERT INTO votes (
+				vote_id, user_id, voter_name, voter_email, voter_phone,
+				welcome_accepted, welcome_accepted_at, rules_version
+			)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`
+
+		_, err = r.db.Pool.Exec(ctx, insertQuery, 
+			voteID,        // vote_id
+			userID,        // user_id
+			"",           // voter_name (empty, will be filled later)
+			"",           // voter_email (empty, will be filled later)
+			"",           // voter_phone (empty, will be filled later)
+			true,         // welcome_accepted
+			acceptedAt,   // welcome_accepted_at
+			rulesVersion, // rules_version
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create welcome acceptance record: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// GetWelcomeAcceptance retrieves welcome acceptance status from database
+func (r *VoteRepository) GetWelcomeAcceptance(ctx context.Context, userID string) (*domain.WelcomeAcceptanceResponse, error) {
+	query := `
+		SELECT user_id, welcome_accepted, welcome_accepted_at, rules_version
+		FROM votes 
+		WHERE user_id = $1
+	`
+
+	var response domain.WelcomeAcceptanceResponse
+	var welcomeAcceptedAt sql.NullTime
+	var rulesVersion sql.NullString
+
+	err := r.db.Pool.QueryRow(ctx, query, userID).Scan(
+		&response.UserID,
+		&response.WelcomeAccepted,
+		&welcomeAcceptedAt,
+		&rulesVersion,
+	)
+
+	if err == pgx.ErrNoRows {
+		return nil, nil // User not found
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get welcome acceptance: %w", err)
+	}
+
+	if welcomeAcceptedAt.Valid {
+		response.WelcomeAcceptedAt = welcomeAcceptedAt.Time
+	}
+	if rulesVersion.Valid {
+		response.RulesVersion = rulesVersion.String
+	}
+
+	return &response, nil
+}
+
 // GetPersonalInfoByUserID retrieves personal info for the authenticated user
 func (r *VoteRepository) GetPersonalInfoByUserID(ctx context.Context, userID string) (*domain.PersonalInfoMeResponse, error) {
 	query := `
 		SELECT 
 			user_id, voter_phone, voter_name, voter_email, favorite_video, pdpa_consent, 
-			created_at, created_at as updated_at, consent_timestamp, marketing_consent
+			created_at, created_at as updated_at, consent_timestamp, marketing_consent,
+			welcome_accepted, welcome_accepted_at, rules_version
 		FROM votes 
 		WHERE user_id = $1
 	`
@@ -627,18 +714,26 @@ func (r *VoteRepository) GetPersonalInfoByUserID(ctx context.Context, userID str
 	var response domain.PersonalInfoMeResponse
 	var consentTimestamp sql.NullTime
 	var voterName sql.NullString
+	var voterPhone sql.NullString
+	var voterEmail sql.NullString
+	var favoriteVideo sql.NullString
+	var welcomeAcceptedAt sql.NullTime
+	var rulesVersion sql.NullString
 
 	err := r.db.Pool.QueryRow(ctx, query, userID).Scan(
 		&response.UserID,
-		&response.Phone,
+		&voterPhone,
 		&voterName,
-		&response.Email,
-		&response.FavoriteVideo,
+		&voterEmail,
+		&favoriteVideo,
 		&response.ConsentPDPA,
 		&response.CreatedAt,
 		&response.UpdatedAt,
 		&consentTimestamp,
 		&response.MarketingConsent,
+		&response.WelcomeAccepted,
+		&welcomeAcceptedAt,
+		&rulesVersion,
 	)
 
 	if err != nil {
@@ -646,6 +741,17 @@ func (r *VoteRepository) GetPersonalInfoByUserID(ctx context.Context, userID str
 			return nil, fmt.Errorf("personal info not found for user_id: %s", userID)
 		}
 		return nil, fmt.Errorf("failed to get personal info: %w", err)
+	}
+
+	// Handle nullable fields
+	if voterPhone.Valid {
+		response.Phone = voterPhone.String
+	}
+	if voterEmail.Valid {
+		response.Email = voterEmail.String
+	}
+	if favoriteVideo.Valid {
+		response.FavoriteVideo = favoriteVideo.String
 	}
 
 	// Split voter_name into first and last name
@@ -659,6 +765,14 @@ func (r *VoteRepository) GetPersonalInfoByUserID(ctx context.Context, userID str
 
 	if consentTimestamp.Valid {
 		response.ConsentTimestamp = &consentTimestamp.Time
+	}
+
+	// Set welcome acceptance fields
+	if welcomeAcceptedAt.Valid {
+		response.WelcomeAcceptedAt = &welcomeAcceptedAt.Time
+	}
+	if rulesVersion.Valid {
+		response.RulesVersion = rulesVersion.String
 	}
 
 	return &response, nil

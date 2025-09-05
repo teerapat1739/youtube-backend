@@ -25,7 +25,7 @@ func main() {
 
 	// Get command
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run main.go [drop|up|seed|cleanup|phone-migration]")
+		fmt.Println("Usage: go run main.go [drop|up|seed|cleanup|phone-migration|welcome-tracking]")
 		os.Exit(1)
 	}
 
@@ -70,9 +70,15 @@ func main() {
 		}
 		fmt.Println("✅ Phone number migration completed successfully")
 
+	case "welcome-tracking":
+		if err := runWelcomeTrackingMigration(ctx, conn); err != nil {
+			log.Fatalf("Failed to run welcome tracking migration: %v", err)
+		}
+		fmt.Println("✅ Welcome tracking migration completed successfully")
+
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
-		fmt.Println("Usage: go run main.go [drop|up|seed|cleanup|phone-migration]")
+		fmt.Println("Usage: go run main.go [drop|up|seed|cleanup|phone-migration|welcome-tracking]")
 		os.Exit(1)
 	}
 }
@@ -246,6 +252,32 @@ func runPhoneMigration(ctx context.Context, conn *pgx.Conn) error {
 	fmt.Println("  ✅ Phone numbers normalized and unique constraint added")
 	fmt.Println("  ✅ Duplicate records removed (kept earliest vote per phone)")
 	fmt.Println("  ✅ Index added for better phone lookup performance")
+
+	return nil
+}
+
+func runWelcomeTrackingMigration(ctx context.Context, conn *pgx.Conn) error {
+	// Read the migration SQL file
+	sqlFile := "migrations/add_welcome_tracking.sql"
+	if _, err := os.Stat(sqlFile); os.IsNotExist(err) {
+		return fmt.Errorf("migration file not found: %s", sqlFile)
+	}
+
+	sqlBytes, err := ioutil.ReadFile(sqlFile)
+	if err != nil {
+		return fmt.Errorf("failed to read migration file: %w", err)
+	}
+
+	// Execute the migration SQL
+	_, err = conn.Exec(ctx, string(sqlBytes))
+	if err != nil {
+		return fmt.Errorf("failed to execute welcome tracking migration: %w", err)
+	}
+
+	fmt.Println("  ✅ Welcome tracking columns added to votes table")
+	fmt.Println("  ✅ Index on welcome_accepted column created")
+	fmt.Println("  ✅ Composite index on user_id and welcome_accepted created")
+	fmt.Println("  ✅ Column comments added for documentation")
 
 	return nil
 }

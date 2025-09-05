@@ -72,7 +72,7 @@ func OptionalAuth(authService service.AuthService, logger *logger.Logger) func(h
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			authHeader := r.Header.Get("Authorization")
-			
+
 			// If no auth header, continue without authentication
 			if authHeader == "" {
 				next.ServeHTTP(w, r)
@@ -114,17 +114,17 @@ func RequestID(logger *logger.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Generate request ID (simple timestamp-based for now)
 			requestID := generateRequestID()
-			
+
 			// Add to context
 			ctx := context.WithValue(r.Context(), RequestIDContextKey, requestID)
 			r = r.WithContext(ctx)
-			
+
 			// Add to response header
 			w.Header().Set("X-Request-ID", requestID)
-			
+
 			// Add to logger context
 			logger = logger.WithField("request_id", requestID)
-			
+
 			next.ServeHTTP(w, r)
 		})
 	}
@@ -138,16 +138,16 @@ func generateRequestID() string {
 // writeErrorResponse writes an error response to the client
 func writeErrorResponse(w http.ResponseWriter, appErr *errors.AppError, logger *logger.Logger) {
 	logger.WithError(appErr).Error("Request error")
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(appErr.StatusCode)
-	
+
 	response := &errors.ErrorResponse{}
 	response.Error.Type = appErr.Type
 	response.Error.Message = appErr.Message
 	response.Error.Details = appErr.Details
 	response.Error.Timestamp = time.Now().UTC().Format(time.RFC3339)
-	
+
 	// You would typically use json.Marshal here, but for now we'll write a simple response
 	w.Write([]byte(`{"error":{"type":"` + string(appErr.Type) + `","message":"` + appErr.Message + `","timestamp":"` + response.Error.Timestamp + `"}}`))
 }

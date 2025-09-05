@@ -1,9 +1,9 @@
 package middleware
 
 import (
+	"be-v2/pkg/logger"
 	"net/http"
 	"strings"
-	"be-v2/pkg/logger"
 )
 
 // CORSConfig holds CORS configuration
@@ -65,7 +65,7 @@ func CORS(config *CORSConfig, logger *logger.Logger) func(http.Handler) http.Han
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := r.Header.Get("Origin")
-			
+
 			// Log CORS request
 			logger.WithFields(map[string]interface{}{
 				"origin": origin,

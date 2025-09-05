@@ -281,6 +281,9 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 			r.Post("/vote", votingHandler.SubmitVoteOnly)
 			r.Get("/personal-info/me", votingHandler.GetPersonalInfoMe)
 			
+			// Welcome/Rules acceptance endpoint
+			r.Post("/welcome/accept", votingHandler.AcceptWelcome)
+			
 			// Add v1/user routes for frontend compatibility (auth required)
 			r.Route("/v1/user", func(r chi.Router) {
 				r.Post("/personal-info", votingHandler.CreatePersonalInfo)

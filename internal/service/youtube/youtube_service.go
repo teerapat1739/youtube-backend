@@ -24,7 +24,7 @@ type Service struct {
 // NewService creates a new YouTube service
 func NewService(apiKey string, logger *logger.Logger) service.YouTubeService {
 	return &Service{
-		apiKey: apiKey,
+		apiKey:     apiKey,
 		httpClient: &http.Client{},
 		logger:     logger,
 	}
@@ -41,10 +41,10 @@ func (s *Service) CheckSubscription(ctx context.Context, accessToken string, cha
 		AccessToken: accessToken,
 		TokenType:   "Bearer",
 	}
-	
+
 	oauth2Config := &oauth2.Config{}
 	client := oauth2Config.Client(ctx, token)
-	
+
 	youtubeService, err := youtube.NewService(ctx, option.WithHTTPClient(client))
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to create YouTube service")
@@ -113,7 +113,7 @@ func (s *Service) GetChannelInfo(ctx context.Context, channelID string) (*domain
 	}
 
 	channel := channelsResponse.Items[0]
-	
+
 	// Get thumbnail URL
 	thumbnail := ""
 	if channel.Snippet.Thumbnails != nil {

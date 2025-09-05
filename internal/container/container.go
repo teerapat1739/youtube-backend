@@ -32,16 +32,16 @@ func New(cfg *config.Config, logger *logger.Logger) (*Container, error) {
 	} else {
 		logger.Info("Redis URL not configured, proceeding without caching")
 	}
-	
+
 	// Initialize services
 	authService := auth.NewService(cfg.GoogleClientID, logger)
 	youtubeService := youtube.NewService(cfg.YouTubeAPIKey, logger)
-	
+
 	services := &service.Services{
 		Auth:    authService,
 		YouTube: youtubeService,
 	}
-	
+
 	return &Container{
 		Config:      cfg,
 		Logger:      logger,

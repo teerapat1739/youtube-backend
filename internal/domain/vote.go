@@ -7,8 +7,8 @@ import (
 
 // Common errors
 var (
-	ErrUserNotFound  = errors.New("user not found: personal info must be created first")
-	ErrVoteFinalized = errors.New("vote is finalized and cannot be changed")
+	ErrUserNotFound   = errors.New("user not found: personal info must be created first")
+	ErrVoteFinalized  = errors.New("vote is finalized and cannot be changed")
 	ErrDuplicatePhone = errors.New("this phone number has already been used")
 )
 
@@ -17,14 +17,14 @@ type Vote struct {
 	// Primary key and identifiers
 	ID     string `json:"id"`
 	UserID string `json:"user_id"` // This serves as the primary key for the unified table
-	
+
 	// Personal information fields
 	Phone         string `json:"phone"` // Normalized phone number (unique)
 	FirstName     string `json:"first_name"`
 	LastName      string `json:"last_name"`
 	Email         string `json:"email"`
 	FavoriteVideo string `json:"favorite_video,omitempty"` // User's favorite video (max 1000 chars, optional)
-	
+
 	// PDPA compliance fields
 	ConsentPDPA          bool       `json:"consent_pdpa"`
 	ConsentTimestamp     *time.Time `json:"consent_timestamp,omitempty"`
@@ -32,17 +32,17 @@ type Vote struct {
 	PrivacyPolicyVersion string     `json:"privacy_policy_version,omitempty"`
 	MarketingConsent     bool       `json:"marketing_consent"`
 	DataRetentionUntil   *time.Time `json:"data_retention_until,omitempty"`
-	
+
 	// Vote-specific fields
 	CandidateID int        `json:"candidate_id,omitempty"` // 0 means no vote cast yet
 	VotedAt     *time.Time `json:"voted_at,omitempty"`
-	
+
 	// Audit fields
 	IPAddress string    `json:"ip_address,omitempty"`
 	UserAgent string    `json:"user_agent,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-	
+
 	// Legacy fields for compatibility (will be deprecated)
 	VoteID     string `json:"vote_id,omitempty"`     // Deprecated: use ID
 	TeamID     int    `json:"team_id,omitempty"`     // Deprecated: use CandidateID
@@ -102,29 +102,29 @@ type TeamResultWithRanking struct {
 
 // VotingResults represents comprehensive voting results with rankings and statistics
 type VotingResults struct {
-	Teams           []TeamResultWithRanking `json:"teams"`
-	TotalVotes      int                     `json:"total_votes"`
-	LastUpdate      time.Time               `json:"last_update"`
-	VotingComplete  bool                    `json:"voting_complete"`
-	Winner          *TeamResultWithRanking  `json:"winner,omitempty"`
-	ParticipatedAt  *time.Time              `json:"participated_at,omitempty"`
-	Statistics      VotingStatistics        `json:"statistics"`
+	Teams          []TeamResultWithRanking `json:"teams"`
+	TotalVotes     int                     `json:"total_votes"`
+	LastUpdate     time.Time               `json:"last_update"`
+	VotingComplete bool                    `json:"voting_complete"`
+	Winner         *TeamResultWithRanking  `json:"winner,omitempty"`
+	ParticipatedAt *time.Time              `json:"participated_at,omitempty"`
+	Statistics     VotingStatistics        `json:"statistics"`
 }
 
 // VotingStatistics provides additional voting statistics
 type VotingStatistics struct {
-	TotalParticipants int                          `json:"total_participants"`
-	VotingPeriod      VotingPeriodInfo            `json:"voting_period"`
-	TopTeams          []TeamResultWithRanking     `json:"top_teams"`
-	Distribution      []VoteDistribution          `json:"distribution"`
+	TotalParticipants int                     `json:"total_participants"`
+	VotingPeriod      VotingPeriodInfo        `json:"voting_period"`
+	TopTeams          []TeamResultWithRanking `json:"top_teams"`
+	Distribution      []VoteDistribution      `json:"distribution"`
 }
 
 // VotingPeriodInfo represents the voting period information
 type VotingPeriodInfo struct {
-	StartDate   *time.Time `json:"start_date,omitempty"`
-	EndDate     *time.Time `json:"end_date,omitempty"`
-	Duration    string     `json:"duration"`
-	IsActive    bool       `json:"is_active"`
+	StartDate *time.Time `json:"start_date,omitempty"`
+	EndDate   *time.Time `json:"end_date,omitempty"`
+	Duration  string     `json:"duration"`
+	IsActive  bool       `json:"is_active"`
 }
 
 // VoteDistribution represents vote distribution by percentage ranges
@@ -157,10 +157,27 @@ type PersonalInfoResponse struct {
 	Message       string    `json:"message"`
 }
 
+// WelcomeAcceptanceRequest represents a request to save welcome/rules acceptance
+type WelcomeAcceptanceRequest struct {
+	UserID       string `json:"user_id"`
+	RulesVersion string `json:"rules_version" validate:"required"`
+	IPAddress    string `json:"ip_address,omitempty"`
+	UserAgent    string `json:"user_agent,omitempty"`
+}
+
+// WelcomeAcceptanceResponse represents the response after saving welcome acceptance
+type WelcomeAcceptanceResponse struct {
+	UserID            string    `json:"user_id"`
+	WelcomeAccepted   bool      `json:"welcome_accepted"`
+	WelcomeAcceptedAt time.Time `json:"welcome_accepted_at"`
+	RulesVersion      string    `json:"rules_version"`
+	Message           string    `json:"message"`
+}
+
 // VoteOnlyRequest represents a request to submit only the vote (no personal info)
 type VoteOnlyRequest struct {
-	UserID       string `json:"user_id" validate:"required"`
-	CandidateID  int    `json:"candidate_id" validate:"required,min=1"`
+	UserID      string `json:"user_id" validate:"required"`
+	CandidateID int    `json:"candidate_id" validate:"required,min=1"`
 }
 
 // VoteOnlyResponse represents the response after submitting a vote
@@ -185,4 +202,15 @@ type PersonalInfoMeResponse struct {
 	UpdatedAt        time.Time  `json:"updated_at"`
 	ConsentTimestamp *time.Time `json:"consent_timestamp,omitempty"`
 	MarketingConsent bool       `json:"marketing_consent"`
+
+	// Voting status fields
+	HasVoted       bool       `json:"has_voted"`
+	VoteID         string     `json:"vote_id,omitempty"`
+	VotedAt        *time.Time `json:"voted_at,omitempty"`
+	SelectedTeamID *int       `json:"selected_team_id,omitempty"`
+
+	// Welcome/Rules acceptance fields
+	WelcomeAccepted   bool       `json:"welcome_accepted"`
+	WelcomeAcceptedAt *time.Time `json:"welcome_accepted_at,omitempty"`
+	RulesVersion      string     `json:"rules_version,omitempty"`
 }

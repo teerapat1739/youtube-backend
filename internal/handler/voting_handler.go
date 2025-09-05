@@ -522,6 +522,51 @@ func (h *VotingHandler) validatePersonalInfoRequest(req *domain.PersonalInfoRequ
 	return nil
 }
 
+// AcceptWelcome handles POST /api/welcome/accept
+func (h *VotingHandler) AcceptWelcome(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get user ID from auth context (this endpoint requires authentication)
+	userID := h.getUserID(r)
+	if userID == "" {
+		h.respondError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	// Parse request body
+	var req domain.WelcomeAcceptanceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.respondError(w, http.StatusBadRequest, "Invalid request body")
+		return
+	}
+
+	// Set userID from auth context
+	req.UserID = userID
+
+	// Validate required fields
+	if req.RulesVersion == "" {
+		h.respondError(w, http.StatusBadRequest, "Rules version is required")
+		return
+	}
+
+	// Get client IP and User-Agent for audit trail
+	req.IPAddress = h.getClientIP(r)
+	req.UserAgent = r.Header.Get("User-Agent")
+
+	// Save welcome acceptance
+	response, err := h.votingService.SaveWelcomeAcceptance(ctx, req.UserID, req.RulesVersion)
+	if err != nil {
+		if strings.Contains(err.Error(), "user not found") {
+			h.respondError(w, http.StatusPreconditionFailed, "Personal information must be created first")
+			return
+		}
+		h.respondError(w, http.StatusInternalServerError, "Failed to save welcome acceptance")
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, response)
+}
+
 // GetPersonalInfoMe handles GET /api/personal-info/me
 func (h *VotingHandler) GetPersonalInfoMe(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -559,6 +604,27 @@ func (h *VotingHandler) GetPersonalInfoMe(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	fmt.Printf("[DEBUG] GetPersonalInfoMe: Successfully found personal info for userID '%s'\n", userID)
+	// Check if user has voted (from Redis cache or database)
+	fmt.Printf("[DEBUG] GetPersonalInfoMe: Checking vote status for userID '%s'\n", userID)
+	userVote, err := h.votingService.GetUserVoteStatus(ctx, userID)
+	if err == nil && userVote != nil {
+		// User has voted - add voting status to response
+		personalInfo.HasVoted = true
+		personalInfo.VoteID = userVote.ID
+		if userVote.VotedAt != nil {
+			personalInfo.VotedAt = userVote.VotedAt
+		}
+		if userVote.CandidateID > 0 {
+			teamID := userVote.CandidateID
+			personalInfo.SelectedTeamID = &teamID
+		}
+		fmt.Printf("[DEBUG] GetPersonalInfoMe: User has voted - voteID='%s', teamID=%d\n", userVote.ID, userVote.CandidateID)
+	} else {
+		// User hasn't voted yet
+		personalInfo.HasVoted = false
+		fmt.Printf("[DEBUG] GetPersonalInfoMe: User has not voted yet\n")
+	}
+
+	fmt.Printf("[DEBUG] GetPersonalInfoMe: Successfully found personal info for userID '%s', hasVoted=%v\n", userID, personalInfo.HasVoted)
 	h.respondJSON(w, http.StatusOK, personalInfo)
 }

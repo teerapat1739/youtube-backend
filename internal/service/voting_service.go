@@ -543,6 +543,114 @@ func (s *VotingService) SubmitVoteByPhone(ctx context.Context, phone string, can
 	return s.SubmitVoteOnly(ctx, req)
 }
 
+// SaveWelcomeAcceptance saves welcome/rules acceptance with Redis caching
+func (s *VotingService) SaveWelcomeAcceptance(ctx context.Context, userID, rulesVersion string) (*domain.WelcomeAcceptanceResponse, error) {
+	// Save to database first (write-through caching)
+	err := s.voteRepo.SaveWelcomeAcceptance(ctx, userID, rulesVersion)
+	if err != nil {
+		s.logger.Error("Failed to save welcome acceptance to database",
+			zap.String("user_id", userID),
+			zap.String("rules_version", rulesVersion),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to save welcome acceptance: %w", err)
+	}
+
+	// Cache the welcome acceptance status
+	welcomeKey := fmt.Sprintf(redis.KeyWelcomeAccepted, userID)
+	welcomeData := map[string]interface{}{
+		"accepted":    true,
+		"accepted_at": time.Now().Unix(),
+		"version":     rulesVersion,
+	}
+
+	// Convert to JSON for caching
+	cacheData, _ := json.Marshal(welcomeData)
+	if err := s.redis.Set(ctx, welcomeKey, string(cacheData), redis.TTLWelcomeAccepted); err != nil {
+		s.logger.Warn("Failed to cache welcome acceptance",
+			zap.String("user_id", userID),
+			zap.Error(err))
+		// Continue execution - caching failure shouldn't fail the operation
+	}
+
+	// Build response
+	response := &domain.WelcomeAcceptanceResponse{
+		UserID:            userID,
+		WelcomeAccepted:   true,
+		WelcomeAcceptedAt: time.Now(),
+		RulesVersion:      rulesVersion,
+		Message:           "Welcome acceptance saved successfully",
+	}
+
+	s.logger.Info("Welcome acceptance saved successfully",
+		zap.String("user_id", userID),
+		zap.String("rules_version", rulesVersion))
+
+	return response, nil
+}
+
+// GetWelcomeAcceptance retrieves welcome acceptance status with Redis caching
+func (s *VotingService) GetWelcomeAcceptance(ctx context.Context, userID string) (*domain.WelcomeAcceptanceResponse, error) {
+	// Check Redis cache first
+	welcomeKey := fmt.Sprintf(redis.KeyWelcomeAccepted, userID)
+	cachedData, err := s.redis.Get(ctx, welcomeKey)
+	if err == nil && cachedData != "" {
+		var welcomeData map[string]interface{}
+		if err := json.Unmarshal([]byte(cachedData), &welcomeData); err == nil {
+			// Build response from cache
+			response := &domain.WelcomeAcceptanceResponse{
+				UserID:          userID,
+				WelcomeAccepted: welcomeData["accepted"].(bool),
+				RulesVersion:    welcomeData["version"].(string),
+			}
+
+			// Parse timestamp
+			if acceptedAt, ok := welcomeData["accepted_at"].(float64); ok {
+				timestamp := time.Unix(int64(acceptedAt), 0)
+				response.WelcomeAcceptedAt = timestamp
+			}
+
+			s.logger.Debug("Welcome acceptance retrieved from cache",
+				zap.String("user_id", userID))
+			return response, nil
+		}
+	}
+
+	// Cache miss, get from database
+	response, err := s.voteRepo.GetWelcomeAcceptance(ctx, userID)
+	if err != nil {
+		s.logger.Error("Failed to get welcome acceptance from database",
+			zap.String("user_id", userID),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to get welcome acceptance: %w", err)
+	}
+
+	// User not found
+	if response == nil {
+		return nil, nil
+	}
+
+	// Cache the result
+	welcomeData := map[string]interface{}{
+		"accepted":    response.WelcomeAccepted,
+		"accepted_at": response.WelcomeAcceptedAt.Unix(),
+		"version":     response.RulesVersion,
+	}
+
+	if cacheData, err := json.Marshal(welcomeData); err == nil {
+		if err := s.redis.Set(ctx, welcomeKey, string(cacheData), redis.TTLWelcomeAccepted); err != nil {
+			s.logger.Warn("Failed to cache welcome acceptance",
+				zap.String("user_id", userID),
+				zap.Error(err))
+		}
+	}
+
+	s.logger.Debug("Welcome acceptance retrieved from database",
+		zap.String("user_id", userID),
+		zap.Bool("accepted", response.WelcomeAccepted))
+
+	return response, nil
+}
+
 // GetPersonalInfoByUserID retrieves personal info for the authenticated user
 func (s *VotingService) GetPersonalInfoByUserID(ctx context.Context, userID string) (*domain.PersonalInfoMeResponse, error) {
 	return s.voteRepo.GetPersonalInfoByUserID(ctx, userID)

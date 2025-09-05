@@ -4,12 +4,12 @@ import "time"
 
 // SubscriptionStatus represents the status of a YouTube subscription
 type SubscriptionStatus struct {
-	IsSubscribed  bool      `json:"is_subscribed"`
-	ChannelID     string    `json:"channel_id"`
-	ChannelTitle  string    `json:"channel_title"`
-	SubscribedAt  *time.Time `json:"subscribed_at,omitempty"`
-	CheckedAt     time.Time `json:"checked_at"`
-	UserID        string    `json:"user_id"`
+	IsSubscribed bool       `json:"is_subscribed"`
+	ChannelID    string     `json:"channel_id"`
+	ChannelTitle string     `json:"channel_title"`
+	SubscribedAt *time.Time `json:"subscribed_at,omitempty"`
+	CheckedAt    time.Time  `json:"checked_at"`
+	UserID       string     `json:"user_id"`
 }
 
 // YouTubeChannel represents basic YouTube channel information

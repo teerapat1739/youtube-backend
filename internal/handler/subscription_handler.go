@@ -76,13 +76,13 @@ func (h *SubscriptionHandler) CheckSubscription(w http.ResponseWriter, r *http.R
 	// Check subscription with caching if Redis is available
 	var subscriptionResponse *domain.SubscriptionCheckResponse
 	var err error
-	
+
 	cacheService := h.container.GetCacheService()
 	if cacheService != nil {
 		// Use Redis caching
 		subscriptionResponse, err = cacheService.GetSubscriptionWithCache(
-			r.Context(), 
-			user.Sub, 
+			r.Context(),
+			user.Sub,
 			channelID,
 			youtubeService.CheckSubscription,
 			accessToken,
@@ -92,7 +92,7 @@ func (h *SubscriptionHandler) CheckSubscription(w http.ResponseWriter, r *http.R
 		logger.Debug("Redis not available, using direct YouTube API call")
 		subscriptionResponse, err = youtubeService.CheckSubscription(r.Context(), accessToken, channelID)
 	}
-	
+
 	if err != nil {
 		logger.WithError(err).Error("Failed to check subscription")
 		if appErr, ok := err.(*errors.AppError); ok {
@@ -129,7 +129,7 @@ func (h *SubscriptionHandler) CheckSubscription(w http.ResponseWriter, r *http.R
 func (h *SubscriptionHandler) InvalidateSubscriptionCache(w http.ResponseWriter, r *http.Request) {
 	logger := h.container.GetLogger()
 	cacheService := h.container.GetCacheService()
-	
+
 	if cacheService == nil {
 		h.writeErrorResponse(w, errors.NewInternalError("Redis cache not available", nil))
 		return

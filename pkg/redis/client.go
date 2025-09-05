@@ -24,6 +24,7 @@ const (
 	KeyVotingResults = "voting:results"           // Complete voting results with rankings
 	KeyLastUpdate    = "voting:last_update"
 	KeyETag          = "voting:etag:%s"
+	KeyWelcomeAccepted = "welcome:user:%s:accepted" // Welcome acceptance status
 	
 	// Subscription related keys
 	KeySubscriptionCheck = "subscription:%s:%s"   // subscription:{userID}:{channelID}
@@ -38,6 +39,7 @@ const (
 	TTLUserVote    = 24 * time.Hour     // User vote status (long TTL, changes rarely)
 	TTLPhoneVote   = 2 * time.Hour      // Phone vote status (moderate TTL, balance between performance and data consistency)
 	TTLETag        = 5 * time.Minute    // ETag cache
+	TTLWelcomeAccepted = 24 * time.Hour // Welcome acceptance status (long TTL, changes rarely)
 	
 	// Subscription related TTLs
 	TTLSubscription = 24 * time.Hour    // Subscription status cache (24 hours as requested)

@@ -29,7 +29,7 @@ func NewCacheService(redisClient *redis.Client, logger *zap.Logger) *CacheServic
 // GetTeamWithCache retrieves team data with cache-aside pattern and comprehensive error handling
 func (c *CacheService) GetTeamWithCache(ctx context.Context, teamID int, dbFallback func(ctx context.Context, id int) (*domain.Team, error)) (*domain.Team, error) {
 	cacheKey := fmt.Sprintf(redis.KeyTeamByID, teamID)
-	
+
 	// Try cache first
 	cachedData, err := c.redis.Get(ctx, cacheKey)
 	if err == nil && cachedData != "" {
@@ -39,14 +39,14 @@ func (c *CacheService) GetTeamWithCache(ctx context.Context, teamID int, dbFallb
 			return &team, nil
 		} else {
 			// Log cache corruption but continue to database
-			c.logger.Warn("Team cache corrupted, falling back to database", 
-				zap.Int("team_id", teamID), 
+			c.logger.Warn("Team cache corrupted, falling back to database",
+				zap.Int("team_id", teamID),
 				zap.Error(marshalErr))
 		}
 	} else if err != nil {
 		// Log cache error but continue to database
-		c.logger.Warn("Team cache error, falling back to database", 
-			zap.Int("team_id", teamID), 
+		c.logger.Warn("Team cache error, falling back to database",
+			zap.Int("team_id", teamID),
 			zap.Error(err))
 	}
 
@@ -68,7 +68,7 @@ func (c *CacheService) GetTeamWithCache(ctx context.Context, teamID int, dbFallb
 // CheckPhoneUsageWithCache checks if a phone number has been used with cache-first pattern
 func (c *CacheService) CheckPhoneUsageWithCache(ctx context.Context, normalizedPhone string, dbFallback func(ctx context.Context, phone string) (bool, error)) (bool, error) {
 	cacheKey := fmt.Sprintf(redis.KeyPhoneVoted, normalizedPhone)
-	
+
 	// Check cache first
 	exists, err := c.redis.Exists(ctx, cacheKey)
 	if err == nil && exists > 0 {
@@ -76,8 +76,8 @@ func (c *CacheService) CheckPhoneUsageWithCache(ctx context.Context, normalizedP
 		return true, nil
 	} else if err != nil {
 		// Log cache error but continue to database
-		c.logger.Warn("Phone cache error, falling back to database", 
-			zap.String("phone_hash", c.hashPhoneForLog(normalizedPhone)), 
+		c.logger.Warn("Phone cache error, falling back to database",
+			zap.String("phone_hash", c.hashPhoneForLog(normalizedPhone)),
 			zap.Error(err))
 	}
 
@@ -100,23 +100,23 @@ func (c *CacheService) CheckPhoneUsageWithCache(ctx context.Context, normalizedP
 func (c *CacheService) CacheVoteSubmission(ctx context.Context, userID, normalizedPhone string, teamID int) error {
 	userKey := fmt.Sprintf(redis.KeyUserVoted, userID)
 	phoneKey := fmt.Sprintf(redis.KeyPhoneVoted, normalizedPhone)
-	
+
 	// Use pipeline for atomic caching
 	pipe := c.redis.Pipeline()
 	pipe.Set(ctx, userKey, teamID, redis.TTLUserVote)
 	pipe.Set(ctx, phoneKey, "1", redis.TTLPhoneVote)
-	
+
 	_, err := pipe.Exec(ctx)
 	if err != nil {
-		c.logger.Error("Failed to cache vote submission", 
+		c.logger.Error("Failed to cache vote submission",
 			zap.String("user_id", userID),
 			zap.String("phone_hash", c.hashPhoneForLog(normalizedPhone)),
 			zap.Int("team_id", teamID),
 			zap.Error(err))
 		return err
 	}
-	
-	c.logger.Debug("Vote submission cached successfully", 
+
+	c.logger.Debug("Vote submission cached successfully",
 		zap.String("user_id", userID),
 		zap.Int("team_id", teamID))
 	return nil
@@ -137,7 +137,7 @@ func (c *CacheService) InvalidateVotingCaches(teamID int) {
 
 		// Delete specific keys
 		if err := c.redis.Delete(ctx, keysToDelete...); err != nil {
-			c.logger.Error("Failed to invalidate cache keys", 
+			c.logger.Error("Failed to invalidate cache keys",
 				zap.Strings("keys", keysToDelete),
 				zap.Error(err))
 		}
@@ -156,14 +156,14 @@ func (c *CacheService) HealthCheck(ctx context.Context) error {
 	start := time.Now()
 	err := c.redis.Health(ctx)
 	duration := time.Since(start)
-	
+
 	if err != nil {
-		c.logger.Error("Cache health check failed", 
+		c.logger.Error("Cache health check failed",
 			zap.Duration("duration", duration),
 			zap.Error(err))
 		return err
 	}
-	
+
 	c.logger.Debug("Cache health check passed", zap.Duration("duration", duration))
 	return nil
 }
@@ -172,18 +172,18 @@ func (c *CacheService) HealthCheck(ctx context.Context) error {
 func (c *CacheService) cacheTeamAsync(teamID int, team *domain.Team) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	cacheKey := fmt.Sprintf(redis.KeyTeamByID, teamID)
 	teamData, err := json.Marshal(team)
 	if err != nil {
-		c.logger.Error("Failed to marshal team for caching", 
+		c.logger.Error("Failed to marshal team for caching",
 			zap.Int("team_id", teamID),
 			zap.Error(err))
 		return
 	}
-	
+
 	if err := c.redis.Set(ctx, cacheKey, string(teamData), redis.TTLTeamByID); err != nil {
-		c.logger.Error("Failed to cache team data", 
+		c.logger.Error("Failed to cache team data",
 			zap.Int("team_id", teamID),
 			zap.Error(err))
 	} else {
@@ -195,14 +195,14 @@ func (c *CacheService) cacheTeamAsync(teamID int, team *domain.Team) {
 func (c *CacheService) cachePhoneUsageAsync(normalizedPhone string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	cacheKey := fmt.Sprintf(redis.KeyPhoneVoted, normalizedPhone)
 	if err := c.redis.Set(ctx, cacheKey, "1", redis.TTLPhoneVote); err != nil {
-		c.logger.Error("Failed to cache phone usage", 
+		c.logger.Error("Failed to cache phone usage",
 			zap.String("phone_hash", c.hashPhoneForLog(normalizedPhone)),
 			zap.Error(err))
 	} else {
-		c.logger.Debug("Phone usage cached successfully", 
+		c.logger.Debug("Phone usage cached successfully",
 			zap.String("phone_hash", c.hashPhoneForLog(normalizedPhone)))
 	}
 }
@@ -210,36 +210,36 @@ func (c *CacheService) cachePhoneUsageAsync(normalizedPhone string) {
 // GetSubscriptionWithCache retrieves subscription status with cache-aside pattern
 func (c *CacheService) GetSubscriptionWithCache(ctx context.Context, userID, channelID string, fallback func(ctx context.Context, accessToken, channelID string) (*domain.SubscriptionCheckResponse, error), accessToken string) (*domain.SubscriptionCheckResponse, error) {
 	cacheKey := fmt.Sprintf(redis.KeySubscriptionCheck, userID, channelID)
-	
+
 	// Try cache first
 	cachedData, err := c.redis.Get(ctx, cacheKey)
 	if err == nil && cachedData != "" {
 		var subscription domain.SubscriptionCheckResponse
 		if marshalErr := json.Unmarshal([]byte(cachedData), &subscription); marshalErr == nil {
-			c.logger.Debug("Subscription cache hit", 
+			c.logger.Debug("Subscription cache hit",
 				zap.String("user_id", userID),
 				zap.String("channel_id", channelID))
 			return &subscription, nil
 		} else {
 			// Log cache corruption but continue to YouTube API
-			c.logger.Warn("Subscription cache corrupted, falling back to YouTube API", 
+			c.logger.Warn("Subscription cache corrupted, falling back to YouTube API",
 				zap.String("user_id", userID),
 				zap.String("channel_id", channelID),
 				zap.Error(marshalErr))
 		}
 	} else if err != nil && err != goredis.Nil {
 		// Log cache error but continue to YouTube API (ignore Nil errors as they're expected for cache misses)
-		c.logger.Warn("Subscription cache error, falling back to YouTube API", 
+		c.logger.Warn("Subscription cache error, falling back to YouTube API",
 			zap.String("user_id", userID),
 			zap.String("channel_id", channelID),
 			zap.Error(err))
 	}
 
 	// Cache miss or error - get from YouTube API
-	c.logger.Debug("Subscription cache miss", 
+	c.logger.Debug("Subscription cache miss",
 		zap.String("user_id", userID),
 		zap.String("channel_id", channelID))
-	
+
 	subscription, err := fallback(ctx, accessToken, channelID)
 	if err != nil {
 		return nil, fmt.Errorf("YouTube API fallback failed: %w", err)
@@ -256,16 +256,16 @@ func (c *CacheService) GetSubscriptionWithCache(ctx context.Context, userID, cha
 // InvalidateSubscriptionCache removes subscription cache for a specific user and channel
 func (c *CacheService) InvalidateSubscriptionCache(ctx context.Context, userID, channelID string) error {
 	cacheKey := fmt.Sprintf(redis.KeySubscriptionCheck, userID, channelID)
-	
+
 	if err := c.redis.Delete(ctx, cacheKey); err != nil {
-		c.logger.Error("Failed to invalidate subscription cache", 
+		c.logger.Error("Failed to invalidate subscription cache",
 			zap.String("user_id", userID),
 			zap.String("channel_id", channelID),
 			zap.Error(err))
 		return err
 	}
-	
-	c.logger.Debug("Subscription cache invalidated", 
+
+	c.logger.Debug("Subscription cache invalidated",
 		zap.String("user_id", userID),
 		zap.String("channel_id", channelID))
 	return nil
@@ -274,14 +274,14 @@ func (c *CacheService) InvalidateSubscriptionCache(ctx context.Context, userID, 
 // InvalidateUserSubscriptionCaches removes all subscription caches for a specific user
 func (c *CacheService) InvalidateUserSubscriptionCaches(ctx context.Context, userID string) error {
 	pattern := fmt.Sprintf(redis.KeySubscriptionCheck, userID, "*")
-	
+
 	if err := c.redis.InvalidatePattern(ctx, pattern); err != nil {
-		c.logger.Error("Failed to invalidate user subscription caches", 
+		c.logger.Error("Failed to invalidate user subscription caches",
 			zap.String("user_id", userID),
 			zap.Error(err))
 		return err
 	}
-	
+
 	c.logger.Debug("User subscription caches invalidated", zap.String("user_id", userID))
 	return nil
 }
@@ -290,24 +290,24 @@ func (c *CacheService) InvalidateUserSubscriptionCaches(ctx context.Context, use
 func (c *CacheService) cacheSubscriptionAsync(userID, channelID string, subscription *domain.SubscriptionCheckResponse) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	cacheKey := fmt.Sprintf(redis.KeySubscriptionCheck, userID, channelID)
 	subscriptionData, err := json.Marshal(subscription)
 	if err != nil {
-		c.logger.Error("Failed to marshal subscription for caching", 
+		c.logger.Error("Failed to marshal subscription for caching",
 			zap.String("user_id", userID),
 			zap.String("channel_id", channelID),
 			zap.Error(err))
 		return
 	}
-	
+
 	if err := c.redis.Set(ctx, cacheKey, string(subscriptionData), redis.TTLSubscription); err != nil {
-		c.logger.Error("Failed to cache subscription data", 
+		c.logger.Error("Failed to cache subscription data",
 			zap.String("user_id", userID),
 			zap.String("channel_id", channelID),
 			zap.Error(err))
 	} else {
-		c.logger.Debug("Subscription cached successfully", 
+		c.logger.Debug("Subscription cached successfully",
 			zap.String("user_id", userID),
 			zap.String("channel_id", channelID))
 	}

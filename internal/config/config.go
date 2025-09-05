@@ -10,16 +10,16 @@ import (
 
 // Config holds all configuration values for the application
 type Config struct {
-	Port               string
-	AllowedOrigins     []string
-	GoogleClientID     string
-	YouTubeAPIKey      string
-	YouTubeChannelID   string
-	LogLevel           string
-	DatabaseURL        string
-	RedisURL           string
-	SupabaseURL        string
-	SupabaseJWTSecret  string
+	Port              string
+	AllowedOrigins    []string
+	GoogleClientID    string
+	YouTubeAPIKey     string
+	YouTubeChannelID  string
+	LogLevel          string
+	DatabaseURL       string
+	RedisURL          string
+	SupabaseURL       string
+	SupabaseJWTSecret string
 }
 
 // Load loads configuration from environment variables
@@ -54,16 +54,16 @@ func parseOrigins(origins string) []string {
 	if origins == "" {
 		return []string{}
 	}
-	
+
 	parts := strings.Split(origins, ",")
 	result := make([]string, 0, len(parts))
-	
+
 	for _, part := range parts {
 		if trimmed := strings.TrimSpace(part); trimmed != "" {
 			result = append(result, trimmed)
 		}
 	}
-	
+
 	return result
 }
 
