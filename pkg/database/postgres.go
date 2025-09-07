@@ -53,8 +53,8 @@ func (db *PostgresDB) Health(ctx context.Context) error {
 	return db.Pool.Ping(ctx)
 }
 
-// RefreshMaterializedView refreshes the vote_summary materialized view
+// RefreshMaterializedView refreshes the vote_count_summary materialized view
 func (db *PostgresDB) RefreshMaterializedView(ctx context.Context) error {
-	_, err := db.Pool.Exec(ctx, "REFRESH MATERIALIZED VIEW CONCURRENTLY vote_summary")
+	_, err := db.Pool.Exec(ctx, "REFRESH MATERIALIZED VIEW CONCURRENTLY vote_count_summary")
 	return err
 }
