@@ -45,7 +45,7 @@ func (r *Resources) Cleanup(ctx context.Context) error {
 	r.closed = true
 
 	var errors []error
-	
+
 	r.log.Info("Starting graceful shutdown...")
 
 	// Shutdown HTTP server first to stop accepting new requests
@@ -62,14 +62,14 @@ func (r *Resources) Cleanup(ctx context.Context) error {
 	// Close Redis connection with health check
 	if r.redisClient != nil {
 		r.log.Info("Closing Redis connection...")
-		
+
 		// Quick health check before closing (with short timeout)
 		healthCtx, healthCancel := context.WithTimeout(ctx, 2*time.Second)
 		if err := r.redisClient.Health(healthCtx); err != nil {
 			r.log.WithError(err).Warn("Redis health check failed before closing")
 		}
 		healthCancel()
-		
+
 		if err := r.redisClient.Close(); err != nil {
 			r.log.WithError(err).Error("Failed to close Redis connection")
 			errors = append(errors, fmt.Errorf("Redis close: %w", err))
@@ -81,14 +81,14 @@ func (r *Resources) Cleanup(ctx context.Context) error {
 	// Close database connection pool with health check
 	if r.db != nil {
 		r.log.Info("Closing database connection pool...")
-		
+
 		// Quick health check before closing (with short timeout)
 		healthCtx, healthCancel := context.WithTimeout(ctx, 2*time.Second)
 		if err := r.db.Health(healthCtx); err != nil {
 			r.log.WithError(err).Warn("Database health check failed before closing")
 		}
 		healthCancel()
-		
+
 		r.db.Close()
 		r.log.Info("Database connection pool closed successfully")
 	}
@@ -261,11 +261,11 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 			// Public endpoints (no authentication required)
 			r.Get("/status", votingHandler.GetVotingStatus)
 			r.Get("/results", votingHandler.GetVotingResults)
-			
+
 			// Protected voting endpoints (require authentication)
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.Auth(authService, log))
-				
+
 				r.Post("/vote", votingHandler.SubmitVote)
 				r.Get("/my-status", votingHandler.GetMyVoteStatus)
 				r.Get("/verify/{voteId}", votingHandler.VerifyVote)
@@ -280,10 +280,10 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 			r.Post("/personal-info", votingHandler.CreatePersonalInfo)
 			r.Post("/vote", votingHandler.SubmitVoteOnly)
 			r.Get("/personal-info/me", votingHandler.GetPersonalInfoMe)
-			
+
 			// Welcome/Rules acceptance endpoint
 			r.Post("/welcome/accept", votingHandler.AcceptWelcome)
-			
+
 			// Add v1/user routes for frontend compatibility (auth required)
 			r.Route("/v1/user", func(r chi.Router) {
 				r.Post("/personal-info", votingHandler.CreatePersonalInfo)
