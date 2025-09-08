@@ -147,7 +147,7 @@ func main() {
 	votingService := service.NewVotingService(voteRepo, redisClient, log.Logger)
 
 	// Setup router
-	router := setupRouter(container, votingService)
+	router := setupRouter(container, votingService, db)
 
 	// Create HTTP server
 	server := &http.Server{
@@ -215,7 +215,7 @@ func main() {
 }
 
 // setupRouter configures and returns the HTTP router
-func setupRouter(container *container.Container, votingService *service.VotingService) *chi.Mux {
+func setupRouter(container *container.Container, votingService *service.VotingService, db *database.PostgresDB) *chi.Mux {
 	cfg := container.GetConfig()
 	log := container.GetLogger()
 	authService := container.GetAuthService()
@@ -245,6 +245,7 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 	authHandler := handler.NewAuthHandler(container)
 	subscriptionHandler := handler.NewSubscriptionHandler(container)
 	votingHandler := handler.NewVotingHandler(votingService)
+	testingHandler := handler.NewTestingHandler(container, db)
 
 	// Setup routes
 
@@ -300,6 +301,14 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 			r.Route("/youtube", func(r chi.Router) {
 				r.Get("/subscription-check", subscriptionHandler.CheckSubscription)
 			})
+		})
+
+		// Testing routes (development environment only, no auth required)
+		r.Route("/testing", func(r chi.Router) {
+			// These endpoints are only available in development environment
+			// The handler itself will check the environment and return 403 if not in development
+			r.Post("/refresh-materialized-view", testingHandler.RefreshMaterializedView)
+			r.Get("/materialized-view-stats", testingHandler.GetMaterializedViewStats)
 		})
 	})
 

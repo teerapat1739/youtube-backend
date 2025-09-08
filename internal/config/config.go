@@ -20,6 +20,7 @@ type Config struct {
 	RedisURL          string
 	SupabaseURL       string
 	SupabaseJWTSecret string
+	Environment       string
 }
 
 // Load loads configuration from environment variables
@@ -38,6 +39,7 @@ func Load() (*Config, error) {
 		RedisURL:          getEnv("REDIS_URL", ""),
 		SupabaseURL:       getEnv("SUPABASE_URL", ""),
 		SupabaseJWTSecret: getEnv("SUPABASE_JWT_SECRET", ""),
+		Environment:       getEnv("ENVIRONMENT", "production"),
 	}, nil
 }
 
