@@ -1,493 +1,315 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
+	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
-	"strings"
+	"os/signal"
+	"sync"
+	"syscall"
 	"time"
 
-	"github.com/gamemini/youtube/pkg/api"
-	"github.com/gamemini/youtube/pkg/auth/be"
-	"github.com/gamemini/youtube/pkg/auth/google"
-	"github.com/gamemini/youtube/pkg/database"
-	"github.com/gamemini/youtube/pkg/handlers"
-	"github.com/gamemini/youtube/pkg/models"
-	"github.com/gamemini/youtube/pkg/services"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/gorilla/mux"
+	"github.com/go-chi/chi/v5"
+	chiMiddleware "github.com/go-chi/chi/v5/middleware"
+
+	"be-v2/internal/config"
+	"be-v2/internal/container"
+	"be-v2/internal/handler"
+	"be-v2/internal/middleware"
+	"be-v2/internal/repository"
+	"be-v2/internal/service"
+	"be-v2/pkg/database"
+	"be-v2/pkg/logger"
+	"be-v2/pkg/redis"
 )
 
-// Load .env file
-func loadEnv() {
-	file, err := os.Open(".env.local")
-	if err != nil {
-		fmt.Println("No .env.local file found, using system environment variables")
-		return
-	}
-	defer file.Close()
-
-	fmt.Println("Loading .env.local file...")
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue // Skip empty lines and comments
-		}
-		if strings.Contains(line, "=") {
-			parts := strings.SplitN(line, "=", 2)
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
-			os.Setenv(key, value)
-			fmt.Printf("Loaded: %s\n", key)
-		}
-	}
+// Resources holds all resources that need cleanup
+type Resources struct {
+	db          *database.PostgresDB
+	redisClient *redis.Client
+	server      *http.Server
+	log         *logger.Logger
+	mu          sync.Mutex
+	closed      bool
 }
 
-// CORS middleware
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		
-		// Log CORS request for debugging
-		log.Printf("🌐 [CORS] Request from origin: %s, Method: %s, Path: %s", origin, r.Method, r.URL.Path)
+// Cleanup gracefully closes all resources
+func (r *Resources) Cleanup(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-		// Get frontend URL from environment variable
-		frontendURL := os.Getenv("FRONTEND_URL")
-		
-		// Allow specific origins
-		allowedOrigins := []string{
-			"http://localhost:3000",
-			"http://localhost:3001",
-			"http://localhost:3002",
-			"http://localhost:5173",        // Vite default
-			"https://poc-461500.web.app",   // Firebase hosting
-			"https://ananped.netlify.app",  // Production frontend
-		}
-		
-		// Add FRONTEND_URL to allowed origins if it's set and not already included
-		if frontendURL != "" {
-			found := false
-			for _, allowed := range allowedOrigins {
-				if allowed == frontendURL {
-					found = true
-					break
-				}
-			}
-			if !found {
-				allowedOrigins = append(allowedOrigins, frontendURL)
-				log.Printf("🌐 [CORS] Added FRONTEND_URL to allowed origins: %s", frontendURL)
-			}
-		}
-		
-		// Log allowed origins for debugging on first request (to avoid spam)
-		if r.URL.Path == "/health" && r.Method == "GET" {
-			log.Printf("🌐 [CORS] Current allowed origins: %v", allowedOrigins)
-		}
+	if r.closed {
+		return nil
+	}
+	r.closed = true
 
-		// Check if origin is allowed
-		originAllowed := false
-		for _, allowedOrigin := range allowedOrigins {
-			if origin == allowedOrigin {
-				originAllowed = true
-				break
-			}
-		}
+	var errors []error
 
-		if originAllowed {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			log.Printf("✅ [CORS] Allowed origin: %s", origin)
-		} else if origin == "" {
-			// If no origin header (like direct API calls), allow localhost:3000 as default
-			w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+	r.log.Info("Starting graceful shutdown...")
+
+	// Shutdown HTTP server first to stop accepting new requests
+	if r.server != nil {
+		r.log.Info("Shutting down HTTP server...")
+		if err := r.server.Shutdown(ctx); err != nil {
+			r.log.WithError(err).Error("Failed to shutdown HTTP server")
+			errors = append(errors, fmt.Errorf("HTTP server shutdown: %w", err))
 		} else {
-			// For development, be more permissive with localhost origins
-			if strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1") {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-			} else {
-				// Log the blocked origin for debugging
-				log.Printf("⚠️ [CORS] Blocked origin: %s", origin)
-			}
+			r.log.Info("HTTP server shutdown complete")
 		}
+	}
 
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Origin, User-Agent, DNT, Cache-Control, X-Mx-ReqToken, Keep-Alive, X-Requested-With, If-Modified-Since, sec-ch-ua, sec-ch-ua-mobile, sec-ch-ua-platform, Referer")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
-		w.Header().Set("Access-Control-Max-Age", "86400")
-		w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Type")
+	// Close Redis connection with health check
+	if r.redisClient != nil {
+		r.log.Info("Closing Redis connection...")
 
-		// Handle preflight OPTIONS requests
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
+		// Quick health check before closing (with short timeout)
+		healthCtx, healthCancel := context.WithTimeout(ctx, 2*time.Second)
+		if err := r.redisClient.Health(healthCtx); err != nil {
+			r.log.WithError(err).Warn("Redis health check failed before closing")
 		}
+		healthCancel()
 
-		next.ServeHTTP(w, r)
-	})
+		if err := r.redisClient.Close(); err != nil {
+			r.log.WithError(err).Error("Failed to close Redis connection")
+			errors = append(errors, fmt.Errorf("Redis close: %w", err))
+		} else {
+			r.log.Info("Redis connection closed successfully")
+		}
+	}
+
+	// Close database connection pool with health check
+	if r.db != nil {
+		r.log.Info("Closing database connection pool...")
+
+		// Quick health check before closing (with short timeout)
+		healthCtx, healthCancel := context.WithTimeout(ctx, 2*time.Second)
+		if err := r.db.Health(healthCtx); err != nil {
+			r.log.WithError(err).Warn("Database health check failed before closing")
+		}
+		healthCancel()
+
+		r.db.Close()
+		r.log.Info("Database connection pool closed successfully")
+	}
+
+	if len(errors) > 0 {
+		r.log.WithField("error_count", len(errors)).Error("Cleanup completed with errors")
+		return fmt.Errorf("cleanup completed with %d errors: %v", len(errors), errors)
+	}
+
+	r.log.Info("Graceful shutdown completed successfully")
+	return nil
 }
 
 func main() {
-	// Load environment variables from .env.local file
-	loadEnv()
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Failed to load configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize logger
+	log, err := logger.New(cfg.LogLevel)
+	if err != nil {
+		fmt.Printf("Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
+
+	log.WithFields(map[string]interface{}{
+		"port":        cfg.Port,
+		"log_level":   cfg.LogLevel,
+		"environment": "development",
+	}).Info("Starting be-v2 server")
+
+	// Create dependency injection container
+	container, err := container.New(cfg, log)
+	if err != nil {
+		log.WithError(err).Fatal("Failed to create container")
+	}
 
 	// Initialize database connection
-	fmt.Println("🔌 Initializing database connection...")
-	if err := database.InitDB(); err != nil {
-		log.Fatalf("Failed to initialize database: %v", err)
-	}
-	defer database.CloseDB()
-
-	// Initialize enhanced authentication handlers
-	fmt.Println("🔐 Initializing enhanced authentication handlers...")
-	authHandlers := handlers.NewAuthHandlers()
-
-	router := mux.NewRouter()
-
-	// Enhanced Auth routes with proper user creation/update
-	router.HandleFunc("/auth/google/login", authHandlers.HandleGoogleLogin).Methods("GET")
-	router.HandleFunc("/auth/google/callback", authHandlers.HandleGoogleCallback).Methods("GET")
-	// BE Login route (using be package)
-	router.HandleFunc("/auth/be/login", func(w http.ResponseWriter, r *http.Request) {
-		be.Login(w, r)
-	}).Methods("POST")
-
-	// Activity routes with logging
-	router.HandleFunc("/api/check-subscription", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("🔍 [ROUTER] Received request: %s %s from %s", r.Method, r.URL.String(), r.RemoteAddr)
-		log.Printf("🔍 [ROUTER] User-Agent: %s", r.Header.Get("User-Agent"))
-		log.Printf("🔍 [ROUTER] Authorization header present: %t", r.Header.Get("Authorization") != "")
-		api.HandleSubscriptionCheck(w, r)
-	}).Methods("GET", "OPTIONS")
-	router.HandleFunc("/api/join-activity", api.HandleJoinActivity).Methods("POST")
-
-	// Ananped celebration routes
-	router.HandleFunc("/api/ananped/subscription-check", api.HandleAnanpedSubscriptionCheck).Methods("GET", "OPTIONS")
-
-	// Enhanced YouTube API routes
-	router.HandleFunc("/api/user-info", authHandlers.HandleUserInfo).Methods("GET", "OPTIONS")
-	// YouTube subscriptions route
-	router.HandleFunc("/api/youtube-subscriptions", func(w http.ResponseWriter, r *http.Request) {
-		token := r.Header.Get("Authorization")
-		if token == "" {
-			http.Error(w, "Authorization header required", http.StatusUnauthorized)
-			return
-		}
-
-		// Remove "Bearer " prefix if present
-		if strings.HasPrefix(token, "Bearer ") {
-			token = token[7:]
-		}
-
-		subscriptions, err := google.GetYouTubeSubscriptions(token)
-		if err != nil {
-			http.Error(w, "Failed to get subscriptions: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(subscriptions)
-	}).Methods("GET", "OPTIONS")
-
-	// New API routes for the voting system
-	// Voting system routes with hardcoded teams
-	router.HandleFunc("/api/activities/active", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("🎯 [API] GET /api/activities/active - Request from %s", r.RemoteAddr)
-		
-		// Extract user ID for personalized response
-		_, _, userID, err := extractUserFromToken(r)
-		if err != nil {
-			log.Printf("❌ [API] Failed to extract user from token: %v", err)
-			// For now, use a default userID for anonymous users
-			userID = "anonymous-" + fmt.Sprintf("%d", time.Now().Unix())
-		}
-		
-		teamService := services.NewTeamService()
-		activityID := "active" // Use "active" as the default activity ID
-		
-		activity, err := teamService.GetActivityWithTeams(r.Context(), activityID, userID)
-		if err != nil {
-			log.Printf("❌ [API] Failed to get activity with teams: %v", err)
-			http.Error(w, fmt.Sprintf("Failed to get activity: %v", err), http.StatusInternalServerError)
-			return
-		}
-		
-		log.Printf("✅ [API] Successfully retrieved activity with %d teams", len(activity.Teams))
-		
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"data":    activity,
-		})
-	}).Methods("GET", "OPTIONS")
-
-	router.HandleFunc("/api/activities/{id}/teams", func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		activityID := vars["id"]
-		log.Printf("🏆 [API] GET /api/activities/%s/teams", activityID)
-		
-		// Extract user ID for personalized response
-		_, _, userID, err := extractUserFromToken(r)
-		if err != nil {
-			log.Printf("❌ [API] Failed to extract user from token: %v", err)
-			userID = "anonymous-" + fmt.Sprintf("%d", time.Now().Unix())
-		}
-		
-		teamService := services.NewTeamService()
-		teams, err := teamService.GetTeamsWithVotes(r.Context(), activityID)
-		if err != nil {
-			log.Printf("❌ [API] Failed to get teams: %v", err)
-			http.Error(w, fmt.Sprintf("Failed to get teams: %v", err), http.StatusInternalServerError)
-			return
-		}
-		
-		// Get user vote status
-		userVote, err := teamService.GetUserVoteStatus(r.Context(), userID, activityID)
-		if err != nil {
-			log.Printf("❌ [API] Failed to get user vote status: %v", err)
-			userVote = &models.VotingStatus{HasVoted: false}
-		}
-		
-		log.Printf("✅ [API] Successfully retrieved %d teams", len(teams))
-		
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success":     true,
-			"data": map[string]interface{}{
-				"teams":       teams,
-				"activity_id": activityID,
-				"user_vote":   userVote,
-			},
-		})
-	}).Methods("GET", "OPTIONS")
-
-	router.HandleFunc("/api/activities/{id}/vote", func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		activityID := vars["id"]
-		log.Printf("🗳️  [API] POST /api/activities/%s/vote", activityID)
-		
-		var voteRequest models.CreateVoteRequest
-		if err := json.NewDecoder(r.Body).Decode(&voteRequest); err != nil {
-			log.Printf("❌ [API] Invalid request body: %v", err)
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-		
-		_, _, userID, err := extractUserFromToken(r)
-		if err != nil {
-			log.Printf("❌ [API] Failed to extract user from token: %v", err)
-			http.Error(w, fmt.Sprintf("Authentication required: %v", err), http.StatusUnauthorized)
-			return
-		}
-		
-		log.Printf("🔐 [API] Vote request - UserID: %s, TeamID: %s", userID, voteRequest.TeamID)
-		
-		teamService := services.NewTeamService()
-		response, err := teamService.SubmitVote(r.Context(), userID, voteRequest.TeamID, activityID)
-		if err != nil {
-			log.Printf("❌ [API] Failed to submit vote: %v", err)
-			http.Error(w, fmt.Sprintf("Failed to submit vote: %v", err), http.StatusBadRequest)
-			return
-		}
-		
-		log.Printf("✅ [API] Vote submitted successfully")
-		
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"data":    response,
-		})
-	}).Methods("POST", "OPTIONS")
-
-	// Add vote status endpoint
-	router.HandleFunc("/api/activities/{id}/vote-status", func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		activityID := vars["id"]
-		log.Printf("📊 [API] GET /api/activities/%s/vote-status", activityID)
-		
-		_, _, userID, err := extractUserFromToken(r)
-		if err != nil {
-			log.Printf("❌ [API] Failed to extract user from token: %v", err)
-			http.Error(w, fmt.Sprintf("Authentication required: %v", err), http.StatusUnauthorized)
-			return
-		}
-		
-		teamService := services.NewTeamService()
-		voteStatus, err := teamService.GetUserVoteStatus(r.Context(), userID, activityID)
-		if err != nil {
-			log.Printf("❌ [API] Failed to get vote status: %v", err)
-			http.Error(w, fmt.Sprintf("Failed to get vote status: %v", err), http.StatusInternalServerError)
-			return
-		}
-		
-		log.Printf("✅ [API] Vote status retrieved - HasVoted: %v", voteStatus.HasVoted)
-		
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"success": true,
-			"data":    voteStatus,
-		})
-	}).Methods("GET", "OPTIONS")
-
-	// Enhanced user profile routes with proper authentication
-	router.HandleFunc("/api/user/profile", authHandlers.HandleGetUserProfile).Methods("GET", "OPTIONS")
-	router.HandleFunc("/api/user/profile", authHandlers.HandleUpdateUserProfile).Methods("POST", "OPTIONS")
-	router.HandleFunc("/api/user/profile/create", authHandlers.HandleCreateInitialUserProfile).Methods("POST", "OPTIONS")
-
-	// Terms and PDPA routes
-	router.HandleFunc("/api/terms", authHandlers.HandleGetTerms).Methods("GET", "OPTIONS")
-	router.HandleFunc("/api/user/accept-terms", authHandlers.HandleAcceptTerms).Methods("POST", "OPTIONS")
-
-	// Legacy routes (plural) for backward compatibility
-	router.HandleFunc("/api/users/profile", authHandlers.HandleGetUserProfile).Methods("GET", "OPTIONS")
-	router.HandleFunc("/api/users/profile", authHandlers.HandleUpdateUserProfile).Methods("PUT", "OPTIONS")
-
-	// Health check endpoint
-	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		// Check database health
-		dbHealth := "connected"
-		if err := database.HealthCheck(); err != nil {
-			dbHealth = "disconnected"
-		}
-
-		health := map[string]interface{}{
-			"status":    "healthy",
-			"timestamp": "2025-01-20T00:00:00Z",
-			"version":   "1.0.0",
-			"services": map[string]string{
-				"database": dbHealth,
-				"api":      "running",
-			},
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(health)
-	}).Methods("GET")
-
-	// CORS middleware
-	router.Use(corsMiddleware)
-
-	// Get port from environment variable
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	ctx := context.Background()
+	db, err := database.NewPostgresDB(ctx, cfg.DatabaseURL)
+	if err != nil {
+		log.WithError(err).Fatal("Failed to connect to database")
 	}
 
-	// Debug: Print environment info
-	fmt.Printf("🌍 Environment: %s\n", os.Getenv("NODE_ENV"))
-	fmt.Printf("🔑 GOOGLE_CLIENT_ID: %s\n", os.Getenv("GOOGLE_CLIENT_ID"))
-	clientSecret := os.Getenv("GOOGLE_CLIENT_SECRET")
-	if len(clientSecret) > 10 {
-		fmt.Printf("🔑 GOOGLE_CLIENT_SECRET: %s\n", clientSecret[:10]+"...")
-	} else if len(clientSecret) > 0 {
-		fmt.Printf("🔑 GOOGLE_CLIENT_SECRET: %s\n", strings.Repeat("*", len(clientSecret)))
-	} else {
-		fmt.Printf("🔑 GOOGLE_CLIENT_SECRET: (not set)\n")
+	// Initialize Redis connection
+	redisClient, err := redis.NewClient(cfg.RedisURL)
+	if err != nil {
+		log.WithError(err).Fatal("Failed to connect to Redis")
 	}
-	
-	// Additional YouTube API related environment variables
-	youtubeAPIKey := os.Getenv("YOUTUBE_API_KEY")
-	if youtubeAPIKey == "" {
-		fmt.Printf("🔑 YOUTUBE_API_KEY: (empty)\n")
-	} else if len(youtubeAPIKey) > 10 {
-		fmt.Printf("🔑 YOUTUBE_API_KEY: %s...\n", youtubeAPIKey[:10])
-	} else {
-		fmt.Printf("🔑 YOUTUBE_API_KEY: %s\n", strings.Repeat("*", len(youtubeAPIKey)))
-	}
-	fmt.Printf("🔑 JWT_SECRET: %s\n", func() string {
-		secret := os.Getenv("JWT_SECRET")
-		if len(secret) > 10 {
-			return secret[:10] + "..."
-		} else if len(secret) > 0 {
-			return strings.Repeat("*", len(secret))
-		}
-		return "(not set)"
-	}())
-	fmt.Printf("🌐 FRONTEND_URL: %s\n", os.Getenv("FRONTEND_URL"))
-	fmt.Printf("🌐 REDIRECT_URL: %s\n", os.Getenv("REDIRECT_URL"))
 
-	// Start server
-	fmt.Printf("🚀 Server is running on port %s\n", port)
-	log.Fatal(http.ListenAndServe(":"+port, router))
+	// Initialize repositories and services
+	voteRepo := repository.NewVoteRepository(db)
+	votingService := service.NewVotingService(voteRepo, redisClient, log.Logger)
+
+	// Setup router
+	router := setupRouter(container, votingService)
+
+	// Create HTTP server
+	server := &http.Server{
+		Addr:         ":" + cfg.Port,
+		Handler:      router,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Create resources manager for cleanup
+	resources := &Resources{
+		db:          db,
+		redisClient: redisClient,
+		server:      server,
+		log:         log,
+	}
+
+	// Setup graceful shutdown handling
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+
+	// Setup cleanup function that will be called regardless of how the program exits
+	defer func() {
+		// Create context with timeout for cleanup operations
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		if err := resources.Cleanup(cleanupCtx); err != nil {
+			log.WithError(err).Error("Cleanup completed with errors")
+		}
+	}()
+
+	// Start server in a goroutine
+	serverErrChan := make(chan error, 1)
+	go func() {
+		log.Info("Server starting on port " + cfg.Port)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.WithError(err).Error("Server error occurred")
+			serverErrChan <- err
+		}
+	}()
+
+	// Wait for interrupt signal or server error
+	select {
+	case sig := <-quit:
+		log.WithField("signal", sig.String()).Info("Received shutdown signal")
+	case err := <-serverErrChan:
+		log.WithError(err).Error("Server failed, initiating shutdown")
+	}
+
+	log.Info("Initiating graceful shutdown...")
+
+	// Create context with timeout for shutdown operations
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+
+	// Perform cleanup - this will be called here and also in defer for safety
+	if err := resources.Cleanup(shutdownCtx); err != nil {
+		log.WithError(err).Error("Graceful shutdown completed with errors")
+		os.Exit(1)
+	}
+
+	log.Info("Application shutdown complete")
 }
 
-// extractUserFromToken extracts user information from JWT token with proper verification
-func extractUserFromToken(r *http.Request) (googleID, email, userID string, err error) {
-	log.Println("🔐 Starting token extraction...")
+// setupRouter configures and returns the HTTP router
+func setupRouter(container *container.Container, votingService *service.VotingService) *chi.Mux {
+	cfg := container.GetConfig()
+	log := container.GetLogger()
+	authService := container.GetAuthService()
 
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
-		return "", "", "", fmt.Errorf("no authorization header")
+	// Create router
+	r := chi.NewRouter()
+
+	// Setup CORS middleware
+	corsConfig := &middleware.CORSConfig{
+		AllowedOrigins:   cfg.AllowedOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Content-Type", "Content-Length", "Accept-Encoding", "X-CSRF-Token", "Authorization"},
+		ExposedHeaders:   []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           86400,
 	}
 
-	// Extract token from "Bearer <token>"
-	parts := strings.Split(authHeader, " ")
-	if len(parts) != 2 || parts[0] != "Bearer" {
-		return "", "", "", fmt.Errorf("invalid authorization header format")
-	}
+	// Setup middlewares
+	r.Use(middleware.CORS(corsConfig, log))
+	r.Use(middleware.RequestID(log))
+	r.Use(chiMiddleware.RealIP)
+	r.Use(chiMiddleware.Recoverer)
+	r.Use(chiMiddleware.Timeout(60 * time.Second))
 
-	tokenString := parts[1]
-	log.Printf("🔑 Token type detected: %s", tokenString[:10]+"...")
+	// Create handlers
+	healthHandler := handler.NewHealthHandler(container)
+	authHandler := handler.NewAuthHandler(container)
+	subscriptionHandler := handler.NewSubscriptionHandler(container)
+	votingHandler := handler.NewVotingHandler(votingService)
 
-	// Handle Google OAuth tokens (ya29.xxx format)
-	if strings.HasPrefix(tokenString, "ya29.") {
-		log.Println("📱 Google OAuth token detected - using Google API for verification")
-		return verifyGoogleOAuthToken(tokenString)
-	}
+	// Setup routes
 
-	// Handle custom JWT tokens
-	log.Println("🔐 Custom JWT token detected - using JWT verification")
-	return verifyCustomJWTToken(tokenString)
-}
+	// Health check (no auth required)
+	r.Get("/health", healthHandler.Check)
 
-// verifyGoogleOAuthToken verifies Google OAuth access tokens
-func verifyGoogleOAuthToken(tokenString string) (googleID, email, userID string, err error) {
-	// For now, create consistent user data based on token
-	// In production, you would call Google's tokeninfo endpoint:
-	// https://oauth2.googleapis.com/tokeninfo?access_token=TOKEN
+	// Public API routes
+	r.Route("/api", func(r chi.Router) {
+		// YouTube channel info (no auth required)
+		r.Get("/youtube/channel/{channelId}", subscriptionHandler.GetChannelInfo)
 
-	// Create a hash-based user ID from token for consistency
-	hasher := fmt.Sprintf("%x", tokenString[5:15])
-	googleID = "google-user-" + hasher
-	email = "user-" + hasher + "@gmail.com"
-	userID = googleID // Use googleID as userID for consistency
+		// Voting routes (legacy endpoints)
+		r.Route("/v1/voting", func(r chi.Router) {
+			// Public endpoints (no authentication required)
+			r.Get("/status", votingHandler.GetVotingStatus)
+			r.Get("/results", votingHandler.GetVotingResults)
 
-	log.Printf("✅ Google token verified - UserID: %s, Email: %s", userID, email)
-	return googleID, email, userID, nil
-}
+			// Protected voting endpoints (require authentication)
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.Auth(authService, log))
 
-// verifyCustomJWTToken verifies custom JWT tokens issued by your backend
-func verifyCustomJWTToken(tokenString string) (googleID, email, userID string, err error) {
-	// Get JWT secret from environment
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		return "", "", "", fmt.Errorf("JWT_SECRET not configured")
-	}
+				r.Post("/vote", votingHandler.SubmitVote)
+				r.Get("/my-status", votingHandler.GetMyVoteStatus)
+				r.Get("/verify/{voteId}", votingHandler.VerifyVote)
+			})
+		})
 
-	// Parse and validate JWT token
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		// Validate signing method
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
-		}
-		return []byte(jwtSecret), nil
+		// Protected routes (require authentication)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Auth(authService, log))
+
+			// Personal info and voting endpoints (auth required)
+			r.Post("/personal-info", votingHandler.CreatePersonalInfo)
+			r.Post("/vote", votingHandler.SubmitVoteOnly)
+			r.Get("/personal-info/me", votingHandler.GetPersonalInfoMe)
+
+			// Welcome/Rules acceptance endpoint
+			r.Post("/welcome/accept", votingHandler.AcceptWelcome)
+
+			// Add v1/user routes for frontend compatibility (auth required)
+			r.Route("/v1/user", func(r chi.Router) {
+				r.Post("/personal-info", votingHandler.CreatePersonalInfo)
+				r.Post("/vote", votingHandler.SubmitVoteOnly)
+			})
+
+			// User routes
+			r.Route("/user", func(r chi.Router) {
+				r.Get("/profile", authHandler.GetProfile)
+				r.Get("/status", votingHandler.GetUserStatus)
+			})
+
+			// YouTube routes
+			r.Route("/youtube", func(r chi.Router) {
+				r.Get("/subscription-check", subscriptionHandler.CheckSubscription)
+			})
+		})
 	})
 
-	if err != nil {
-		log.Printf("❌ JWT verification failed: %v", err)
-		return "", "", "", fmt.Errorf("invalid JWT token: %v", err)
-	}
+	// 404 handler
+	r.NotFound(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte(`{"success":false,"error":{"type":"not_found","message":"Endpoint not found"}}`))
+	})
 
-	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		googleID = fmt.Sprintf("%v", claims["google_id"])
-		email = fmt.Sprintf("%v", claims["email"])
-		userID = fmt.Sprintf("%v", claims["user_id"])
-
-		log.Printf("✅ JWT token verified - UserID: %s, Email: %s", userID, email)
-		return googleID, email, userID, nil
-	}
-
-	return "", "", "", fmt.Errorf("invalid token claims")
+	log.Info("Router configured successfully")
+	return r
 }
