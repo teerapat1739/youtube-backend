@@ -103,7 +103,8 @@ func main() {
 
 func dropTables(ctx context.Context, conn *pgx.Conn) error {
 	queries := []string{
-		`DROP MATERIALIZED VIEW IF EXISTS vote_summary CASCADE`,
+		`DROP MATERIALIZED VIEW IF EXISTS vote_count_summary CASCADE`,
+		`DROP VIEW IF EXISTS vote_summary CASCADE`,
 		`DROP TABLE IF EXISTS votes CASCADE`,
 		`DROP TABLE IF EXISTS teams CASCADE`,
 	}
@@ -175,28 +176,29 @@ func createTables(ctx context.Context, conn *pgx.Conn) error {
 			UNIQUE(user_id)
 		)`,
 
-		// Create materialized view for vote summary
-		`CREATE MATERIALIZED VIEW IF NOT EXISTS vote_summary AS
+		// Create materialized view for vote count summary
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS vote_count_summary AS
 		SELECT 
 			t.id,
 			t.code,
 			t.name,
 			t.description,
 			t.icon,
+			t.image_filename,
 			t.member_count,
 			COUNT(v.id) as vote_count,
 			MAX(v.created_at) as last_vote_at
 		FROM teams t
 		LEFT JOIN votes v ON t.id = v.team_id
 		WHERE t.is_active = true
-		GROUP BY t.id, t.code, t.name, t.description, t.icon, t.member_count`,
+		GROUP BY t.id, t.code, t.name, t.description, t.icon, t.image_filename, t.member_count`,
 
 		// Create indexes
 		`CREATE INDEX IF NOT EXISTS idx_votes_user_id ON votes(user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_votes_team_id ON votes(team_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_votes_created_at ON votes(created_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_teams_active ON teams(is_active)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vote_summary_team_id ON vote_summary(id)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vote_count_summary_team_id ON vote_count_summary(id)`,
 	}
 
 	for _, query := range queries {
@@ -237,7 +239,7 @@ func seedData(ctx context.Context, conn *pgx.Conn) error {
 	fmt.Println("  Seeded 8 teams")
 
 	// Refresh materialized view
-	if _, err := conn.Exec(ctx, "REFRESH MATERIALIZED VIEW vote_summary"); err != nil {
+	if _, err := conn.Exec(ctx, "REFRESH MATERIALIZED VIEW vote_count_summary"); err != nil {
 		return fmt.Errorf("failed to refresh materialized view: %w", err)
 	}
 

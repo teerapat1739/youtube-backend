@@ -289,7 +289,7 @@ func (r *VoteRepository) GetVoteByPhone(ctx context.Context, phone string) (*dom
 func (r *VoteRepository) GetTeamsWithVoteCounts(ctx context.Context) ([]domain.Team, error) {
 	query := `
 		SELECT id, code, name, description, icon, image_filename, member_count, vote_count, last_vote_at
-		FROM vote_summary
+		FROM vote_count_summary
 		ORDER BY vote_count DESC, name ASC
 	`
 

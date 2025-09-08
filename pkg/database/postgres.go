@@ -55,6 +55,8 @@ func (db *PostgresDB) Health(ctx context.Context) error {
 
 // RefreshMaterializedView refreshes the vote_count_summary materialized view
 func (db *PostgresDB) RefreshMaterializedView(ctx context.Context) error {
-	_, err := db.Pool.Exec(ctx, "REFRESH MATERIALIZED VIEW CONCURRENTLY vote_count_summary")
+	// Note: Using non-concurrent refresh as the view doesn't have a unique index
+	// CONCURRENTLY requires a unique index on the materialized view
+	_, err := db.Pool.Exec(ctx, "REFRESH MATERIALIZED VIEW vote_count_summary")
 	return err
 }
