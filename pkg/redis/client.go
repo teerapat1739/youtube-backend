@@ -29,6 +29,10 @@ const (
 	
 	// Subscription related keys
 	KeySubscriptionCheck = "subscription:%s:%s"   // subscription:{userID}:{channelID}
+	
+	// User personal info and status keys
+	KeyPersonalInfoMe = "personal:info:%s"        // personal:info:{userID}
+	KeyUserVoteStatus = "voting:user:%s:status"   // voting:user:{userID}:status
 )
 
 // TTL constants
@@ -44,6 +48,10 @@ const (
 	
 	// Subscription related TTLs
 	TTLSubscription = 24 * time.Hour    // Subscription status cache (24 hours as requested)
+	
+	// User personal info and status TTLs
+	TTLPersonalInfoMe = 4 * time.Hour      // Personal info changes infrequently  
+	TTLUserVoteStatus = 30 * time.Minute   // Vote status needs fresher data
 )
 
 // NewClient creates a new Redis client

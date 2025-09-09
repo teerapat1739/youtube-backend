@@ -101,6 +101,15 @@ func (kb *KeyBuilder) KeyVisitorLastUpdate() string {
 	return kb.BuildKey("visitor:last_update")
 }
 
+// Personal info and status key builders
+func (kb *KeyBuilder) KeyPersonalInfoMe(userID string) string {
+	return kb.BuildKey(fmt.Sprintf(KeyPersonalInfoMe, userID))
+}
+
+func (kb *KeyBuilder) KeyUserVoteStatus(userID string) string {
+	return kb.BuildKey(fmt.Sprintf(KeyUserVoteStatus, userID))
+}
+
 // Generic key builders for custom patterns
 func (kb *KeyBuilder) KeyCustom(pattern string, args ...interface{}) string {
 	key := fmt.Sprintf(pattern, args...)
