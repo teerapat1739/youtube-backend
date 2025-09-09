@@ -181,7 +181,7 @@ func main() {
 	}()
 
 	// Setup router
-	router := setupRouter(container, votingService, visitorService, db)
+	router := setupRouter(container, votingService, visitorService, db, redisClient)
 
 	// Create HTTP server with optimized timeouts for high load
 	server := &http.Server{
@@ -251,7 +251,7 @@ func main() {
 }
 
 // setupRouter configures and returns the HTTP router
-func setupRouter(container *container.Container, votingService *service.VotingService, visitorService service.VisitorService, db *database.PostgresDB) *chi.Mux {
+func setupRouter(container *container.Container, votingService *service.VotingService, visitorService service.VisitorService, db *database.PostgresDB, redisClient *redis.Client) *chi.Mux {
 	cfg := container.GetConfig()
 	log := container.GetLogger()
 	authService := container.GetAuthService()
@@ -283,7 +283,7 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 	subscriptionHandler := handler.NewSubscriptionHandler(container)
 	votingHandler := handler.NewVotingHandler(votingService)
 	visitorHandler := handler.NewVisitorHandler(visitorService, log)
-	testingHandler := handler.NewTestingHandler(container, db)
+	testingHandler := handler.NewTestingHandler(container, db, redisClient)
 
 	// Setup routes
 
@@ -350,6 +350,7 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 			// The handler itself will check the environment and return 403 if not in development
 			r.Post("/refresh-materialized-view", testingHandler.RefreshMaterializedView)
 			r.Get("/materialized-view-stats", testingHandler.GetMaterializedViewStats)
+			r.Delete("/clear-redis-cache", testingHandler.ClearRedisCache)
 		})
 	})
 

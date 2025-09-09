@@ -314,6 +314,200 @@ func (c *CacheService) cacheSubscriptionAsync(userID, channelID string, subscrip
 	}
 }
 
+// GetPersonalInfoWithCache retrieves personal info with caching
+func (c *CacheService) GetPersonalInfoWithCache(ctx context.Context, userID string, dbFallback func(ctx context.Context, userID string) (*domain.PersonalInfoMeResponse, error)) (*domain.PersonalInfoMeResponse, error) {
+	cacheKey := c.redis.KeyBuilder.KeyPersonalInfoMe(userID)
+	
+	// Try cache first
+	cachedData, err := c.redis.Get(ctx, cacheKey)
+	if err == nil && cachedData != "" {
+		var personalInfo domain.PersonalInfoMeResponse
+		if marshalErr := json.Unmarshal([]byte(cachedData), &personalInfo); marshalErr == nil {
+			c.logger.Debug("Personal info cache hit", zap.String("user_id", userID))
+			return &personalInfo, nil
+		} else {
+			// Log cache corruption but continue to database
+			c.logger.Warn("Personal info cache corrupted, falling back to database",
+				zap.String("user_id", userID),
+				zap.Error(marshalErr))
+		}
+	} else if err != nil && err != goredis.Nil {
+		// Log cache error but continue to database
+		c.logger.Warn("Personal info cache error, falling back to database",
+			zap.String("user_id", userID),
+			zap.Error(err))
+	}
+	
+	// Cache miss or error - get from database
+	c.logger.Debug("Personal info cache miss", zap.String("user_id", userID))
+	personalInfo, err := dbFallback(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("database fallback failed: %w", err)
+	}
+	
+	// Cache result asynchronously
+	if personalInfo != nil {
+		go c.cachePersonalInfoAsync(userID, personalInfo)
+	}
+	
+	return personalInfo, nil
+}
+
+// GetUserVoteStatusWithCache retrieves vote status with caching
+func (c *CacheService) GetUserVoteStatusWithCache(ctx context.Context, userID string, dbFallback func(ctx context.Context, userID string) (*domain.Vote, error)) (*domain.Vote, error) {
+	cacheKey := c.redis.KeyBuilder.KeyUserVoteStatus(userID)
+	
+	// Try cache first
+	cachedData, err := c.redis.Get(ctx, cacheKey)
+	if err == nil && cachedData != "" {
+		// Handle "no_vote" special case
+		if cachedData == "no_vote" {
+			c.logger.Debug("User vote status cache hit - no vote", zap.String("user_id", userID))
+			return nil, nil
+		}
+		
+		var voteStatus domain.Vote
+		if marshalErr := json.Unmarshal([]byte(cachedData), &voteStatus); marshalErr == nil {
+			c.logger.Debug("User vote status cache hit", zap.String("user_id", userID))
+			return &voteStatus, nil
+		} else {
+			// Log cache corruption but continue to database
+			c.logger.Warn("User vote status cache corrupted, falling back to database",
+				zap.String("user_id", userID),
+				zap.Error(marshalErr))
+		}
+	} else if err != nil && err != goredis.Nil {
+		// Log cache error but continue to database
+		c.logger.Warn("User vote status cache error, falling back to database",
+			zap.String("user_id", userID),
+			zap.Error(err))
+	}
+	
+	// Cache miss or error - get from database
+	c.logger.Debug("User vote status cache miss", zap.String("user_id", userID))
+	voteStatus, err := dbFallback(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("database fallback failed: %w", err)
+	}
+	
+	// Cache result asynchronously
+	go c.cacheUserVoteStatusAsync(userID, voteStatus)
+	
+	return voteStatus, nil
+}
+
+// InvalidatePersonalInfoCache removes personal info cache for a user
+func (c *CacheService) InvalidatePersonalInfoCache(ctx context.Context, userID string) error {
+	cacheKey := c.redis.KeyBuilder.KeyPersonalInfoMe(userID)
+	
+	if err := c.redis.Delete(ctx, cacheKey); err != nil {
+		c.logger.Error("Failed to invalidate personal info cache",
+			zap.String("user_id", userID),
+			zap.Error(err))
+		return err
+	}
+	
+	c.logger.Debug("Personal info cache invalidated", zap.String("user_id", userID))
+	return nil
+}
+
+// InvalidateUserVoteStatusCache removes vote status cache for a user
+func (c *CacheService) InvalidateUserVoteStatusCache(ctx context.Context, userID string) error {
+	cacheKey := c.redis.KeyBuilder.KeyUserVoteStatus(userID)
+	
+	if err := c.redis.Delete(ctx, cacheKey); err != nil {
+		c.logger.Error("Failed to invalidate user vote status cache",
+			zap.String("user_id", userID),
+			zap.Error(err))
+		return err
+	}
+	
+	c.logger.Debug("User vote status cache invalidated", zap.String("user_id", userID))
+	return nil
+}
+
+// InvalidateUserCaches removes all user-specific caches
+func (c *CacheService) InvalidateUserCaches(ctx context.Context, userID string) error {
+	// Use pipeline for atomic invalidation
+	pipe := c.redis.Pipeline()
+	
+	personalInfoKey := c.redis.KeyBuilder.KeyPersonalInfoMe(userID)
+	voteStatusKey := c.redis.KeyBuilder.KeyUserVoteStatus(userID)
+	
+	pipe.Del(ctx, personalInfoKey)
+	pipe.Del(ctx, voteStatusKey)
+	
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		c.logger.Error("Failed to invalidate user caches",
+			zap.String("user_id", userID),
+			zap.Error(err))
+		return err
+	}
+	
+	c.logger.Debug("All user caches invalidated", zap.String("user_id", userID))
+	return nil
+}
+
+// cachePersonalInfoAsync caches personal info data asynchronously
+func (c *CacheService) cachePersonalInfoAsync(userID string, personalInfo *domain.PersonalInfoMeResponse) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	cacheKey := c.redis.KeyBuilder.KeyPersonalInfoMe(userID)
+	personalInfoData, err := json.Marshal(personalInfo)
+	if err != nil {
+		c.logger.Error("Failed to marshal personal info for caching",
+			zap.String("user_id", userID),
+			zap.Error(err))
+		return
+	}
+	
+	if err := c.redis.Set(ctx, cacheKey, string(personalInfoData), redis.TTLPersonalInfoMe); err != nil {
+		c.logger.Error("Failed to cache personal info data",
+			zap.String("user_id", userID),
+			zap.Error(err))
+	} else {
+		c.logger.Debug("Personal info cached successfully", zap.String("user_id", userID))
+	}
+}
+
+// cacheUserVoteStatusAsync caches user vote status asynchronously
+func (c *CacheService) cacheUserVoteStatusAsync(userID string, voteStatus *domain.Vote) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	cacheKey := c.redis.KeyBuilder.KeyUserVoteStatus(userID)
+	
+	// Handle nil vote (user hasn't voted)
+	if voteStatus == nil {
+		if err := c.redis.Set(ctx, cacheKey, "no_vote", redis.TTLUserVoteStatus); err != nil {
+			c.logger.Error("Failed to cache no vote status",
+				zap.String("user_id", userID),
+				zap.Error(err))
+		} else {
+			c.logger.Debug("No vote status cached successfully", zap.String("user_id", userID))
+		}
+		return
+	}
+	
+	voteStatusData, err := json.Marshal(voteStatus)
+	if err != nil {
+		c.logger.Error("Failed to marshal vote status for caching",
+			zap.String("user_id", userID),
+			zap.Error(err))
+		return
+	}
+	
+	if err := c.redis.Set(ctx, cacheKey, string(voteStatusData), redis.TTLUserVoteStatus); err != nil {
+		c.logger.Error("Failed to cache vote status data",
+			zap.String("user_id", userID),
+			zap.Error(err))
+	} else {
+		c.logger.Debug("Vote status cached successfully", zap.String("user_id", userID))
+	}
+}
+
 // hashPhoneForLog creates a hash of phone number for safe logging (privacy)
 func (c *CacheService) hashPhoneForLog(phone string) string {
 	// For privacy, we only log a prefix and suffix of the phone number
