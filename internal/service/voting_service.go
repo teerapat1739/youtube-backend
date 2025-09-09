@@ -49,7 +49,7 @@ func (s *VotingService) SubmitVote(ctx context.Context, userID string, req *doma
 	}
 
 	// Check if user has already voted using Redis
-	voteKey := fmt.Sprintf(redis.KeyUserVoted, userID)
+	voteKey := s.redis.KeyBuilder.KeyUserVoted(userID)
 	exists, err := s.redis.Exists(ctx, voteKey)
 	if err == nil && exists > 0 {
 		return nil, fmt.Errorf("user has already voted")
@@ -155,7 +155,7 @@ func (s *VotingService) SubmitVote(ctx context.Context, userID string, req *doma
 // GetVotingStatus returns the current voting status
 func (s *VotingService) GetVotingStatus(ctx context.Context, userID string) (*domain.VotingStatus, error) {
 	// Try to get from cache first
-	cachedData, err := s.redis.Get(ctx, redis.KeyVoteSummary)
+	cachedData, err := s.redis.Get(ctx, s.redis.KeyBuilder.KeyVoteSummary())
 	if err == nil && cachedData != "" {
 		var status domain.VotingStatus
 		if err := json.Unmarshal([]byte(cachedData), &status); err == nil {
@@ -205,7 +205,7 @@ func (s *VotingService) GetVotingStatus(ctx context.Context, userID string) (*do
 		LastUpdate: status.LastUpdate,
 	}
 	if data, err := json.Marshal(cacheData); err == nil {
-		_ = s.redis.Set(ctx, redis.KeyVoteSummary, string(data), redis.TTLCounts)
+		_ = s.redis.Set(ctx, s.redis.KeyBuilder.KeyVoteSummary(), string(data), redis.TTLCounts)
 	}
 
 	return status, nil
@@ -226,7 +226,7 @@ func (s *VotingService) VerifyVote(ctx context.Context, voteID string) (*domain.
 // GetUserVoteStatus checks if a user has voted
 func (s *VotingService) GetUserVoteStatus(ctx context.Context, userID string) (*domain.Vote, error) {
 	// Check cache first
-	voteKey := fmt.Sprintf(redis.KeyUserVoted, userID)
+	voteKey := s.redis.KeyBuilder.KeyUserVoted(userID)
 	if exists, _ := s.redis.Exists(ctx, voteKey); exists > 0 {
 		// User has voted, get details from database
 		return s.voteRepo.GetVoteByUserID(ctx, userID)
@@ -271,7 +271,7 @@ func (s *VotingService) addUserVoteStatus(ctx context.Context, status *domain.Vo
 // GetVotingResults returns comprehensive voting results with rankings and statistics
 func (s *VotingService) GetVotingResults(ctx context.Context) (*domain.VotingResults, error) {
 	// Try to get from cache first
-	cachedData, err := s.redis.Get(ctx, redis.KeyVotingResults)
+	cachedData, err := s.redis.Get(ctx, s.redis.KeyBuilder.KeyVotingResults())
 	if err == nil && cachedData != "" {
 		var results domain.VotingResults
 		if err := json.Unmarshal([]byte(cachedData), &results); err == nil {
@@ -316,7 +316,7 @@ func (s *VotingService) GetVotingResults(ctx context.Context) (*domain.VotingRes
 
 	// Cache the results
 	if data, err := json.Marshal(results); err == nil {
-		_ = s.redis.Set(ctx, redis.KeyVotingResults, string(data), redis.TTLCounts)
+		_ = s.redis.Set(ctx, s.redis.KeyBuilder.KeyVotingResults(), string(data), redis.TTLCounts)
 	}
 
 	return results, nil
@@ -501,7 +501,7 @@ func (s *VotingService) SubmitVoteOnly(ctx context.Context, req *domain.VoteOnly
 	}
 
 	// Cache user vote status
-	voteKey := fmt.Sprintf(redis.KeyUserVoted, req.UserID)
+	voteKey := s.redis.KeyBuilder.KeyUserVoted(req.UserID)
 	_ = s.redis.Set(ctx, voteKey, req.CandidateID, redis.TTLUserVote)
 
 	// Invalidate relevant caches for consistency
@@ -556,7 +556,7 @@ func (s *VotingService) SaveWelcomeAcceptance(ctx context.Context, userID, rules
 	}
 
 	// Cache the welcome acceptance status
-	welcomeKey := fmt.Sprintf(redis.KeyWelcomeAccepted, userID)
+	welcomeKey := s.redis.KeyBuilder.KeyWelcomeAccepted(userID)
 	welcomeData := map[string]interface{}{
 		"accepted":    true,
 		"accepted_at": time.Now().Unix(),
@@ -591,7 +591,7 @@ func (s *VotingService) SaveWelcomeAcceptance(ctx context.Context, userID, rules
 // GetWelcomeAcceptance retrieves welcome acceptance status with Redis caching
 func (s *VotingService) GetWelcomeAcceptance(ctx context.Context, userID string) (*domain.WelcomeAcceptanceResponse, error) {
 	// Check Redis cache first
-	welcomeKey := fmt.Sprintf(redis.KeyWelcomeAccepted, userID)
+	welcomeKey := s.redis.KeyBuilder.KeyWelcomeAccepted(userID)
 	cachedData, err := s.redis.Get(ctx, welcomeKey)
 	if err == nil && cachedData != "" {
 		var welcomeData map[string]interface{}

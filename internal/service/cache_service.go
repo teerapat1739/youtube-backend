@@ -28,7 +28,7 @@ func NewCacheService(redisClient *redis.Client, logger *zap.Logger) *CacheServic
 
 // GetTeamWithCache retrieves team data with cache-aside pattern and comprehensive error handling
 func (c *CacheService) GetTeamWithCache(ctx context.Context, teamID int, dbFallback func(ctx context.Context, id int) (*domain.Team, error)) (*domain.Team, error) {
-	cacheKey := fmt.Sprintf(redis.KeyTeamByID, teamID)
+	cacheKey := c.redis.KeyBuilder.KeyTeamByID(teamID)
 
 	// Try cache first
 	cachedData, err := c.redis.Get(ctx, cacheKey)
@@ -67,7 +67,7 @@ func (c *CacheService) GetTeamWithCache(ctx context.Context, teamID int, dbFallb
 
 // CheckPhoneUsageWithCache checks if a phone number has been used with cache-first pattern
 func (c *CacheService) CheckPhoneUsageWithCache(ctx context.Context, normalizedPhone string, dbFallback func(ctx context.Context, phone string) (bool, error)) (bool, error) {
-	cacheKey := fmt.Sprintf(redis.KeyPhoneVoted, normalizedPhone)
+	cacheKey := c.redis.KeyBuilder.KeyPhoneVoted(normalizedPhone)
 
 	// Check cache first
 	exists, err := c.redis.Exists(ctx, cacheKey)
@@ -98,8 +98,8 @@ func (c *CacheService) CheckPhoneUsageWithCache(ctx context.Context, normalizedP
 
 // CacheVoteSubmission caches vote-related data after successful submission
 func (c *CacheService) CacheVoteSubmission(ctx context.Context, userID, normalizedPhone string, teamID int) error {
-	userKey := fmt.Sprintf(redis.KeyUserVoted, userID)
-	phoneKey := fmt.Sprintf(redis.KeyPhoneVoted, normalizedPhone)
+	userKey := c.redis.KeyBuilder.KeyUserVoted(userID)
+	phoneKey := c.redis.KeyBuilder.KeyPhoneVoted(normalizedPhone)
 
 	// Use pipeline for atomic caching
 	pipe := c.redis.Pipeline()
@@ -130,9 +130,9 @@ func (c *CacheService) InvalidateVotingCaches(teamID int) {
 
 		// Keys to invalidate
 		keysToDelete := []string{
-			redis.KeyTeamsAll,
-			redis.KeyVoteSummary,
-			fmt.Sprintf(redis.KeyTeamCount, teamID),
+			c.redis.KeyBuilder.KeyTeamsAll(),
+			c.redis.KeyBuilder.KeyVoteSummary(),
+			c.redis.KeyBuilder.KeyTeamCount(teamID),
 		}
 
 		// Delete specific keys
@@ -143,7 +143,8 @@ func (c *CacheService) InvalidateVotingCaches(teamID int) {
 		}
 
 		// Invalidate ETag pattern caches
-		if err := c.redis.InvalidatePattern(ctx, "voting:etag:*"); err != nil {
+		etagPattern := c.redis.KeyBuilder.KeyCustom("voting:etag:*")
+		if err := c.redis.InvalidatePattern(ctx, etagPattern); err != nil {
 			c.logger.Error("Failed to invalidate ETag pattern", zap.Error(err))
 		}
 
@@ -173,7 +174,7 @@ func (c *CacheService) cacheTeamAsync(teamID int, team *domain.Team) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cacheKey := fmt.Sprintf(redis.KeyTeamByID, teamID)
+	cacheKey := c.redis.KeyBuilder.KeyTeamByID(teamID)
 	teamData, err := json.Marshal(team)
 	if err != nil {
 		c.logger.Error("Failed to marshal team for caching",
@@ -196,7 +197,7 @@ func (c *CacheService) cachePhoneUsageAsync(normalizedPhone string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cacheKey := fmt.Sprintf(redis.KeyPhoneVoted, normalizedPhone)
+	cacheKey := c.redis.KeyBuilder.KeyPhoneVoted(normalizedPhone)
 	if err := c.redis.Set(ctx, cacheKey, "1", redis.TTLPhoneVote); err != nil {
 		c.logger.Error("Failed to cache phone usage",
 			zap.String("phone_hash", c.hashPhoneForLog(normalizedPhone)),
@@ -209,7 +210,7 @@ func (c *CacheService) cachePhoneUsageAsync(normalizedPhone string) {
 
 // GetSubscriptionWithCache retrieves subscription status with cache-aside pattern
 func (c *CacheService) GetSubscriptionWithCache(ctx context.Context, userID, channelID string, fallback func(ctx context.Context, accessToken, channelID string) (*domain.SubscriptionCheckResponse, error), accessToken string) (*domain.SubscriptionCheckResponse, error) {
-	cacheKey := fmt.Sprintf(redis.KeySubscriptionCheck, userID, channelID)
+	cacheKey := c.redis.KeyBuilder.KeySubscriptionCheck(userID, channelID)
 
 	// Try cache first
 	cachedData, err := c.redis.Get(ctx, cacheKey)
@@ -255,7 +256,7 @@ func (c *CacheService) GetSubscriptionWithCache(ctx context.Context, userID, cha
 
 // InvalidateSubscriptionCache removes subscription cache for a specific user and channel
 func (c *CacheService) InvalidateSubscriptionCache(ctx context.Context, userID, channelID string) error {
-	cacheKey := fmt.Sprintf(redis.KeySubscriptionCheck, userID, channelID)
+	cacheKey := c.redis.KeyBuilder.KeySubscriptionCheck(userID, channelID)
 
 	if err := c.redis.Delete(ctx, cacheKey); err != nil {
 		c.logger.Error("Failed to invalidate subscription cache",
@@ -273,7 +274,7 @@ func (c *CacheService) InvalidateSubscriptionCache(ctx context.Context, userID, 
 
 // InvalidateUserSubscriptionCaches removes all subscription caches for a specific user
 func (c *CacheService) InvalidateUserSubscriptionCaches(ctx context.Context, userID string) error {
-	pattern := fmt.Sprintf(redis.KeySubscriptionCheck, userID, "*")
+	pattern := c.redis.KeyBuilder.KeySubscriptionCheck(userID, "*")
 
 	if err := c.redis.InvalidatePattern(ctx, pattern); err != nil {
 		c.logger.Error("Failed to invalidate user subscription caches",
@@ -291,7 +292,7 @@ func (c *CacheService) cacheSubscriptionAsync(userID, channelID string, subscrip
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cacheKey := fmt.Sprintf(redis.KeySubscriptionCheck, userID, channelID)
+	cacheKey := c.redis.KeyBuilder.KeySubscriptionCheck(userID, channelID)
 	subscriptionData, err := json.Marshal(subscription)
 	if err != nil {
 		c.logger.Error("Failed to marshal subscription for caching",

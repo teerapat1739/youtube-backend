@@ -26,8 +26,24 @@ type YouTubeService interface {
 	GetChannelInfo(ctx context.Context, channelID string) (*domain.YouTubeChannel, error)
 }
 
+// VisitorService defines the interface for visitor tracking operations
+type VisitorService interface {
+	// Start initializes the visitor service and begins periodic snapshots
+	Start(ctx context.Context) error
+
+	// Stop gracefully shuts down the visitor service
+	Stop(ctx context.Context) error
+
+	// RecordVisit records a visit from the given IP address and user agent
+	RecordVisit(ctx context.Context, ipAddress, userAgent string) (*domain.RateLimitInfo, error)
+
+	// GetStats retrieves current visitor statistics
+	GetStats(ctx context.Context) (*domain.VisitorStats, error)
+}
+
 // Services aggregates all service interfaces
 type Services struct {
 	Auth    AuthService
 	YouTube YouTubeService
+	Visitor VisitorService
 }

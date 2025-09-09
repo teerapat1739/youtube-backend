@@ -3,6 +3,7 @@ package repository
 import (
 	"be-v2/internal/domain"
 	"context"
+	"time"
 )
 
 // UserRepository defines the interface for user data operations
@@ -32,8 +33,30 @@ type SubscriptionRepository interface {
 	Update(ctx context.Context, subscription *domain.SubscriptionStatus) error
 }
 
+// VisitorRepository defines the interface for visitor snapshot operations
+type VisitorRepository interface {
+	// CreateSnapshot creates a new visitor snapshot in the database
+	CreateSnapshot(ctx context.Context, snapshot *domain.VisitorSnapshot) error
+
+	// GetLatestSnapshot retrieves the most recent visitor snapshot
+	GetLatestSnapshot(ctx context.Context) (*domain.VisitorSnapshot, error)
+
+	// GetSnapshotByDate retrieves a visitor snapshot for a specific date
+	GetSnapshotByDate(ctx context.Context, date time.Time) (*domain.VisitorSnapshot, error)
+
+	// GetHistoricalSnapshots retrieves visitor snapshots within a date range
+	GetHistoricalSnapshots(ctx context.Context, startDate, endDate time.Time, limit int) ([]*domain.VisitorSnapshot, error)
+
+	// DeleteOldSnapshots removes snapshots older than the specified retention period
+	DeleteOldSnapshots(ctx context.Context, retentionDays int) (int64, error)
+
+	// GetSnapshotCount returns the total number of snapshots in the database
+	GetSnapshotCount(ctx context.Context) (int64, error)
+}
+
 // Repositories aggregates all repository interfaces
 type Repositories struct {
 	User         UserRepository
 	Subscription SubscriptionRepository
+	Visitor      VisitorRepository
 }
