@@ -30,15 +30,11 @@ const (
 	KeyWelcomeAccepted = "welcome:user:%s:accepted" // Welcome acceptance status
 
 	// Subscription related keys
-<<<<<<< HEAD
-	KeySubscriptionCheck = "subscription:%s:%s" // subscription:{userID}:{channelID}
-=======
 	KeySubscriptionCheck = "subscription:%s:%s"   // subscription:{userID}:{channelID}
 	
 	// User personal info and status keys
 	KeyPersonalInfoMe = "personal:info:%s"        // personal:info:{userID}
 	KeyUserVoteStatus = "voting:user:%s:status"   // voting:user:{userID}:status
->>>>>>> fe45596 (Enhance Redis cache management and integrate with testing endpoints)
 )
 
 // TTL constants
@@ -53,15 +49,11 @@ const (
 	TTLWelcomeAccepted = 24 * time.Hour   // Welcome acceptance status (long TTL, changes rarely)
 
 	// Subscription related TTLs
-<<<<<<< HEAD
-	TTLSubscription = 24 * time.Hour // Subscription status cache (24 hours as requested)
-=======
 	TTLSubscription = 24 * time.Hour    // Subscription status cache (24 hours as requested)
 	
 	// User personal info and status TTLs
 	TTLPersonalInfoMe = 4 * time.Hour      // Personal info changes infrequently  
 	TTLUserVoteStatus = 30 * time.Minute   // Vote status needs fresher data
->>>>>>> fe45596 (Enhance Redis cache management and integrate with testing endpoints)
 )
 
 // NewClient creates a new Redis client

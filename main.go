@@ -129,7 +129,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	log.WithFields(map[string]interface{}{
+	log.WithFields(map[string]any{
 		"port":        cfg.Port,
 		"log_level":   cfg.LogLevel,
 		"environment": cfg.Environment,
