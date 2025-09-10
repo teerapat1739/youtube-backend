@@ -3,26 +3,30 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"be-v2/internal/container"
 	"be-v2/pkg/database"
+	"be-v2/pkg/redis"
 )
 
 // TestingHandler handles testing/development requests
 type TestingHandler struct {
 	container   *container.Container
 	db          *database.PostgresDB
+	redisClient *redis.Client
 	environment string
 }
 
 // NewTestingHandler creates a new testing handler
-func NewTestingHandler(container *container.Container, db *database.PostgresDB) *TestingHandler {
+func NewTestingHandler(container *container.Container, db *database.PostgresDB, redisClient *redis.Client) *TestingHandler {
 	cfg := container.GetConfig()
 	return &TestingHandler{
 		container:   container,
 		db:          db,
+		redisClient: redisClient,
 		environment: cfg.Environment,
 	}
 }
@@ -32,6 +36,15 @@ type RefreshResponse struct {
 	Status      string    `json:"status"`
 	Message     string    `json:"message"`
 	Environment string    `json:"environment"`
+	Timestamp   time.Time `json:"timestamp"`
+}
+
+// ClearCacheResponse represents the response for cache clearing operations
+type ClearCacheResponse struct {
+	Status      string    `json:"status"`
+	Message     string    `json:"message"`
+	Environment string    `json:"environment"`
+	KeysCleared int       `json:"keys_cleared"`
 	Timestamp   time.Time `json:"timestamp"`
 }
 
@@ -196,4 +209,103 @@ func (h *TestingHandler) GetMaterializedViewStats(w http.ResponseWriter, r *http
 	}
 
 	logger.Debug("Testing: Materialized view stats returned successfully")
+}
+
+// ClearRedisCache handles DELETE /api/testing/clear-redis-cache
+// This endpoint clears all Redis cache keys for the current environment (development only)
+func (h *TestingHandler) ClearRedisCache(w http.ResponseWriter, r *http.Request) {
+	logger := h.container.GetLogger()
+
+	// Check if we're in development environment
+	if h.environment != "development" {
+		logger.Warn("Attempted to clear Redis cache in non-development environment")
+		
+		response := ClearCacheResponse{
+			Status:      "error",
+			Message:     "This endpoint is only available in development environment",
+			Environment: h.environment,
+			KeysCleared: 0,
+			Timestamp:   time.Now().UTC(),
+		}
+		
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	// Optional: Check for a special header for additional protection
+	if r.Header.Get("X-Clear-Cache-Confirm") != "yes" {
+		logger.Warn("Testing: Cache clear request missing confirmation header")
+		
+		response := ClearCacheResponse{
+			Status:      "error",
+			Message:     "Missing confirmation header. Add 'X-Clear-Cache-Confirm: yes' to proceed",
+			Environment: h.environment,
+			KeysCleared: 0,
+			Timestamp:   time.Now().UTC(),
+		}
+		
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	logger.Info("Testing: Redis cache clear requested")
+
+	// Create a context with timeout for the clear operation
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	startTime := time.Now()
+	
+	// Get the environment prefix to clear only keys for this environment
+	prefix := h.redisClient.KeyBuilder.GetPrefix()
+	pattern := prefix + ":*"
+
+	// Clear all keys with the environment prefix
+	// The InvalidatePattern method will handle counting internally
+	err := h.redisClient.InvalidatePattern(ctx, pattern)
+	if err != nil {
+		logger.WithError(err).Error("Testing: Failed to clear Redis cache")
+		
+		response := ClearCacheResponse{
+			Status:      "error",
+			Message:     "Failed to clear Redis cache: " + err.Error(),
+			Environment: h.environment,
+			KeysCleared: -1, // Indicates error occurred
+			Timestamp:   time.Now().UTC(),
+		}
+		
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	duration := time.Since(startTime)
+
+	logger.WithFields(map[string]interface{}{
+		"duration_ms":   duration.Milliseconds(),
+		"prefix":        prefix,
+		"pattern":       pattern,
+	}).Info("Testing: Redis cache cleared successfully")
+
+	response := ClearCacheResponse{
+		Status:      "success",
+		Message:     fmt.Sprintf("Successfully cleared Redis cache keys with prefix '%s' (duration: %s)", prefix, duration.String()),
+		Environment: h.environment,
+		KeysCleared: 0, // We don't track the exact count with current implementation
+		Timestamp:   time.Now().UTC(),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		logger.WithError(err).Error("Testing: Failed to encode clear cache response")
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 }
