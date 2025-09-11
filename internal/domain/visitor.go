@@ -22,6 +22,14 @@ type VisitorStats struct {
 	LastUpdated  time.Time `json:"last_updated"`
 }
 
+// VoteStats represents voting statistics with the same structure as VisitorStats for backward compatibility
+type VoteStats struct {
+	TotalVisits  int64     `json:"total_visits"`  // Total number of votes cast
+	DailyVisits  int64     `json:"daily_visits"`  // Votes cast today (not implemented yet)
+	UniqueVisits int64     `json:"unique_visits"` // Total unique voters (same as total votes in our case)
+	LastUpdated  time.Time `json:"last_updated"`
+}
+
 // VisitRequest represents a request to record a visit
 type VisitRequest struct {
 	IPAddress string    `json:"ip_address"`
