@@ -264,10 +264,9 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 
 	// Create handlers
 	healthHandler := handler.NewHealthHandler(container)
-	authHandler := handler.NewAuthHandler(container)
 	subscriptionHandler := handler.NewSubscriptionHandler(container)
 	votingHandler := handler.NewVotingHandler(votingService)
-	visitorHandler := handler.NewVisitorHandler(visitorService, log)
+	visitorHandler := handler.NewVisitorHandler(visitorService, votingService, log)
 	testingHandler := handler.NewTestingHandler(container, db, redisClient)
 
 	// Setup routes
@@ -295,7 +294,6 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 
 				r.Post("/vote", votingHandler.SubmitVote)
 				r.Get("/my-status", votingHandler.GetMyVoteStatus)
-				r.Get("/verify/{voteId}", votingHandler.VerifyVote)
 			})
 		})
 
@@ -319,7 +317,6 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 
 			// User routes
 			r.Route("/user", func(r chi.Router) {
-				r.Get("/profile", authHandler.GetProfile)
 				r.Get("/status", votingHandler.GetUserStatus)
 			})
 

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -17,13 +18,15 @@ import (
 // VisitorHandler handles visitor tracking HTTP requests
 type VisitorHandler struct {
 	visitorService service.VisitorService
+	votingService  *service.VotingService
 	logger         *logger.Logger
 }
 
 // NewVisitorHandler creates a new visitor handler
-func NewVisitorHandler(visitorService service.VisitorService, logger *logger.Logger) *VisitorHandler {
+func NewVisitorHandler(visitorService service.VisitorService, votingService *service.VotingService, logger *logger.Logger) *VisitorHandler {
 	return &VisitorHandler{
 		visitorService: visitorService,
+		votingService:  votingService,
 		logger:         logger,
 	}
 }
@@ -36,11 +39,12 @@ type VisitResponse struct {
 	Error       *ErrorResponse         `json:"error,omitempty"`
 }
 
-// StatsResponse represents the response for visitor statistics
+// StatsResponse represents the response for visitor/vote statistics
+// Using interface{} for Data to support both VisitorStats and VoteStats
 type StatsResponse struct {
-	Success bool                 `json:"success"`
-	Data    *domain.VisitorStats `json:"data,omitempty"`
-	Error   *ErrorResponse       `json:"error,omitempty"`
+	Success bool           `json:"success"`
+	Data    interface{}    `json:"data,omitempty"`
+	Error   *ErrorResponse `json:"error,omitempty"`
 }
 
 // ErrorResponse represents an error response
@@ -111,20 +115,21 @@ func (h *VisitorHandler) RecordVisit(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetStats handles GET /api/visitor/stats
+// Now returns voting statistics instead of visitor statistics for the voting platform
 func (h *VisitorHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get visitor statistics
-	stats, err := h.visitorService.GetStats(ctx)
+	// Get voting statistics from the voting service
+	voteStats, err := h.getVoteStats(ctx)
 	if err != nil {
-		h.logger.WithError(err).Error("Failed to get visitor stats")
-		h.sendErrorResponse(w, http.StatusInternalServerError, "internal_error", "Failed to get visitor statistics")
+		h.logger.WithError(err).Error("Failed to get vote stats")
+		h.sendErrorResponse(w, http.StatusInternalServerError, "internal_error", "Failed to get voting statistics")
 		return
 	}
 
 	response := StatsResponse{
 		Success: true,
-		Data:    stats,
+		Data:    voteStats,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -137,10 +142,10 @@ func (h *VisitorHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logger.WithFields(map[string]interface{}{
-		"total_visits":  stats.TotalVisits,
-		"daily_visits":  stats.DailyVisits,
-		"unique_visits": stats.UniqueVisits,
-	}).Debug("Visitor stats retrieved successfully")
+		"total_votes":   voteStats.TotalVisits,
+		"daily_votes":   voteStats.DailyVisits,
+		"unique_voters": voteStats.UniqueVisits,
+	}).Debug("Vote stats retrieved successfully")
 }
 
 // GetHistoricalStats handles GET /api/visitor/historical
@@ -246,13 +251,39 @@ func max(a, b int64) int64 {
 	return b
 }
 
+// getVoteStats retrieves voting statistics and formats them for backward compatibility
+// This method leverages the existing caching in VotingService.GetVotingStatus()
+func (h *VisitorHandler) getVoteStats(ctx context.Context) (*domain.VoteStats, error) {
+	// Get current voting status which includes total vote count
+	// This call already uses Redis caching with TTL in the voting service
+	votingStatus, err := h.votingService.GetVotingStatus(ctx, "")
+	if err != nil {
+		h.logger.WithError(err).Error("Failed to get voting status for stats")
+		return nil, err
+	}
+
+	// Create VoteStats with the same structure as VisitorStats for backward compatibility
+	voteStats := &domain.VoteStats{
+		TotalVisits:  int64(votingStatus.TotalVotes), // Total votes cast
+		DailyVisits:  0,                              // Daily votes - could be implemented later
+		UniqueVisits: int64(votingStatus.TotalVotes), // Same as total votes in our voting system
+		LastUpdated:  votingStatus.LastUpdate,        // Use the actual last update time from voting status
+	}
+
+	h.logger.WithFields(map[string]interface{}{
+		"total_votes": voteStats.TotalVisits,
+		"last_update": voteStats.LastUpdated,
+	}).Debug("Vote stats generated from voting status")
+
+	return voteStats, nil
+}
+
 // RegisterRoutes registers visitor handler routes with the router
 func (h *VisitorHandler) RegisterRoutes(r chi.Router) {
 	r.Route("/visitor", func(r chi.Router) {
 		// Public endpoints
 		r.Post("/visit", h.RecordVisit)
 		r.Get("/stats", h.GetStats)
-		r.Get("/historical", h.GetHistoricalStats)
 		r.Get("/health", h.HealthCheck)
 	})
 }
