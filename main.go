@@ -170,13 +170,14 @@ func main() {
 	// Setup router
 	router := setupRouter(container, votingService, visitorService, db)
 
-	// Create HTTP server
+	// Create HTTP server with optimized timeouts for high load
 	server := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      router,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  10 * time.Second,  // Reduced for faster failure detection
+		WriteTimeout: 10 * time.Second,  // Reduced for faster failure detection
+		IdleTimeout:  120 * time.Second, // Increased for connection reuse
+		MaxHeaderBytes: 1 << 20,         // 1MB max header size
 	}
 
 	// Create resources manager for cleanup

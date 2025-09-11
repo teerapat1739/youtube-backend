@@ -21,11 +21,12 @@ func NewPostgresDB(ctx context.Context, databaseURL, readDatabaseURL string) (*P
 		return nil, fmt.Errorf("failed to parse database URL: %w", err)
 	}
 
-	// Configure connection pool for Cloud Run
-	writeConfig.MaxConns = 10
+	// Configure connection pool for Cloud Run with optimized settings
+	// Reduced to prevent overwhelming Neon with 20-150 instances
+	writeConfig.MaxConns = 8  // Reduced from 10
 	writeConfig.MinConns = 2
-	writeConfig.MaxConnLifetime = time.Hour
-	writeConfig.MaxConnIdleTime = time.Minute * 30
+	writeConfig.MaxConnLifetime = time.Minute * 5  // Reduced from 1 hour
+	writeConfig.MaxConnIdleTime = time.Minute * 2   // Reduced from 30 minutes
 	writeConfig.HealthCheckPeriod = time.Minute
 	writeConfig.ConnConfig.ConnectTimeout = time.Second * 5
 
@@ -50,11 +51,12 @@ func NewPostgresDB(ctx context.Context, databaseURL, readDatabaseURL string) (*P
 			return nil, fmt.Errorf("failed to parse read database URL: %w", err)
 		}
 
-		// Configure read pool with more connections since it handles most queries
-		readConfig.MaxConns = 15
+		// Configure read pool with optimized settings for Cloud Run scaling
+		// Reduced to work with 20-150 instances without overwhelming Neon
+		readConfig.MaxConns = 12  // Reduced from 15
 		readConfig.MinConns = 3
-		readConfig.MaxConnLifetime = time.Hour
-		readConfig.MaxConnIdleTime = time.Minute * 30
+		readConfig.MaxConnLifetime = time.Minute * 5  // Reduced from 1 hour
+		readConfig.MaxConnIdleTime = time.Minute * 2   // Reduced from 30 minutes
 		readConfig.HealthCheckPeriod = time.Minute
 		readConfig.ConnConfig.ConnectTimeout = time.Second * 5
 
