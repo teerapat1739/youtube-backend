@@ -9,7 +9,8 @@ import (
 )
 
 type Client struct {
-	rdb *redis.Client
+	rdb        *redis.Client
+	KeyBuilder *KeyBuilder
 }
 
 // Cache key constants
@@ -28,6 +29,10 @@ const (
 	
 	// Subscription related keys
 	KeySubscriptionCheck = "subscription:%s:%s"   // subscription:{userID}:{channelID}
+	
+	// User personal info and status keys
+	KeyPersonalInfoMe = "personal:info:%s"        // personal:info:{userID}
+	KeyUserVoteStatus = "voting:user:%s:status"   // voting:user:{userID}:status
 )
 
 // TTL constants
@@ -43,10 +48,14 @@ const (
 	
 	// Subscription related TTLs
 	TTLSubscription = 24 * time.Hour    // Subscription status cache (24 hours as requested)
+	
+	// User personal info and status TTLs
+	TTLPersonalInfoMe = 4 * time.Hour      // Personal info changes infrequently  
+	TTLUserVoteStatus = 30 * time.Minute   // Vote status needs fresher data
 )
 
 // NewClient creates a new Redis client
-func NewClient(redisURL string) (*Client, error) {
+func NewClient(redisURL string, environment string) (*Client, error) {
 	opts, err := redis.ParseURL(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Redis URL: %w", err)
@@ -70,7 +79,10 @@ func NewClient(redisURL string) (*Client, error) {
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 
-	return &Client{rdb: rdb}, nil
+	// Initialize key builder with environment
+	keyBuilder := NewKeyBuilder(environment)
+
+	return &Client{rdb: rdb, KeyBuilder: keyBuilder}, nil
 }
 
 // Close closes the Redis connection

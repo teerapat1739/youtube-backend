@@ -26,12 +26,13 @@ import (
 
 // Resources holds all resources that need cleanup
 type Resources struct {
-	db          *database.PostgresDB
-	redisClient *redis.Client
-	server      *http.Server
-	log         *logger.Logger
-	mu          sync.Mutex
-	closed      bool
+	db             *database.PostgresDB
+	redisClient    *redis.Client
+	visitorService service.VisitorService
+	server         *http.Server
+	log            *logger.Logger
+	mu             sync.Mutex
+	closed         bool
 }
 
 // Cleanup gracefully closes all resources
@@ -56,6 +57,17 @@ func (r *Resources) Cleanup(ctx context.Context) error {
 			errors = append(errors, fmt.Errorf("HTTP server shutdown: %w", err))
 		} else {
 			r.log.Info("HTTP server shutdown complete")
+		}
+	}
+
+	// Stop visitor service (saves final snapshot)
+	if r.visitorService != nil {
+		r.log.Info("Stopping visitor service...")
+		if err := r.visitorService.Stop(ctx); err != nil {
+			r.log.WithError(err).Error("Failed to stop visitor service")
+			errors = append(errors, fmt.Errorf("visitor service shutdown: %w", err))
+		} else {
+			r.log.Info("Visitor service stopped successfully")
 		}
 	}
 
@@ -120,7 +132,7 @@ func main() {
 	log.WithFields(map[string]interface{}{
 		"port":        cfg.Port,
 		"log_level":   cfg.LogLevel,
-		"environment": "development",
+		"environment": cfg.Environment,
 	}).Info("Starting be-v2 server")
 
 	// Create dependency injection container
@@ -137,7 +149,7 @@ func main() {
 	}
 
 	// Initialize Redis connection
-	redisClient, err := redis.NewClient(cfg.RedisURL)
+	redisClient, err := redis.NewClient(cfg.RedisURL, cfg.Environment)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to connect to Redis")
 	}
@@ -146,8 +158,17 @@ func main() {
 	voteRepo := repository.NewVoteRepository(db)
 	votingService := service.NewVotingService(voteRepo, redisClient, log.Logger)
 
+	// Initialize visitor service
+	visitorRepo := repository.NewVisitorRepository(db)
+	visitorService := service.NewVisitorService(redisClient, visitorRepo, log, cfg.Environment)
+
+	// Start visitor service
+	if err := visitorService.Start(ctx); err != nil {
+		log.WithError(err).Fatal("Failed to start visitor service")
+	}
+
 	// Setup router
-	router := setupRouter(container, votingService, db)
+	router := setupRouter(container, votingService, visitorService, db, redisClient)
 
 	// Create HTTP server
 	server := &http.Server{
@@ -160,10 +181,11 @@ func main() {
 
 	// Create resources manager for cleanup
 	resources := &Resources{
-		db:          db,
-		redisClient: redisClient,
-		server:      server,
-		log:         log,
+		db:             db,
+		redisClient:    redisClient,
+		visitorService: visitorService,
+		server:         server,
+		log:            log,
 	}
 
 	// Setup graceful shutdown handling
@@ -215,7 +237,7 @@ func main() {
 }
 
 // setupRouter configures and returns the HTTP router
-func setupRouter(container *container.Container, votingService *service.VotingService, db *database.PostgresDB) *chi.Mux {
+func setupRouter(container *container.Container, votingService *service.VotingService, visitorService service.VisitorService, db *database.PostgresDB, redisClient *redis.Client) *chi.Mux {
 	cfg := container.GetConfig()
 	log := container.GetLogger()
 	authService := container.GetAuthService()
@@ -242,10 +264,10 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 
 	// Create handlers
 	healthHandler := handler.NewHealthHandler(container)
-	authHandler := handler.NewAuthHandler(container)
 	subscriptionHandler := handler.NewSubscriptionHandler(container)
 	votingHandler := handler.NewVotingHandler(votingService)
-	testingHandler := handler.NewTestingHandler(container, db)
+	visitorHandler := handler.NewVisitorHandler(visitorService, votingService, log)
+	testingHandler := handler.NewTestingHandler(container, db, redisClient)
 
 	// Setup routes
 
@@ -256,6 +278,9 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 	r.Route("/api", func(r chi.Router) {
 		// YouTube channel info (no auth required)
 		r.Get("/youtube/channel/{channelId}", subscriptionHandler.GetChannelInfo)
+
+		// Visitor tracking routes (no auth required)
+		visitorHandler.RegisterRoutes(r)
 
 		// Voting routes (legacy endpoints)
 		r.Route("/v1/voting", func(r chi.Router) {
@@ -269,7 +294,6 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 
 				r.Post("/vote", votingHandler.SubmitVote)
 				r.Get("/my-status", votingHandler.GetMyVoteStatus)
-				r.Get("/verify/{voteId}", votingHandler.VerifyVote)
 			})
 		})
 
@@ -293,7 +317,6 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 
 			// User routes
 			r.Route("/user", func(r chi.Router) {
-				r.Get("/profile", authHandler.GetProfile)
 				r.Get("/status", votingHandler.GetUserStatus)
 			})
 
@@ -309,6 +332,7 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 			// The handler itself will check the environment and return 403 if not in development
 			r.Post("/refresh-materialized-view", testingHandler.RefreshMaterializedView)
 			r.Get("/materialized-view-stats", testingHandler.GetMaterializedViewStats)
+			r.Delete("/clear-redis-cache", testingHandler.ClearRedisCache)
 		})
 	})
 
