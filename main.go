@@ -260,6 +260,7 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 	r.Use(middleware.RequestID(log))
 	r.Use(chiMiddleware.RealIP)
 	r.Use(chiMiddleware.Recoverer)
+	r.Use(chiMiddleware.Compress(5)) // Add gzip compression with level 5 (balanced)
 	r.Use(chiMiddleware.Timeout(60 * time.Second))
 
 	// Create handlers
