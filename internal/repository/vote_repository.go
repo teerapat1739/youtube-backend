@@ -95,7 +95,7 @@ func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*d
 		WHERE user_id = $1
 	`
 
-	err := r.db.Pool.QueryRow(ctx, query, userID).Scan(
+	err := r.db.GetReadPool().QueryRow(ctx, query, userID).Scan(
 		&vote.ID,
 		&voteID, // Use nullable version
 		&vote.UserID,
@@ -196,7 +196,7 @@ func (r *VoteRepository) GetVoteByVoteID(ctx context.Context, voteID string) (*d
 		WHERE vote_id = $1
 	`
 
-	err := r.db.Pool.QueryRow(ctx, query, voteID).Scan(
+	err := r.db.GetReadPool().QueryRow(ctx, query, voteID).Scan(
 		&vote.ID,
 		&vote.VoteID,
 		&vote.UserID,
@@ -246,7 +246,7 @@ func (r *VoteRepository) GetVoteByPhone(ctx context.Context, phone string) (*dom
 		WHERE voter_phone = $1
 	`
 
-	err := r.db.Pool.QueryRow(ctx, query, phone).Scan(
+	err := r.db.GetReadPool().QueryRow(ctx, query, phone).Scan(
 		&vote.ID,
 		&voteID, // Use nullable version
 		&vote.UserID,
@@ -293,7 +293,7 @@ func (r *VoteRepository) GetTeamsWithVoteCounts(ctx context.Context) ([]domain.T
 		ORDER BY vote_count DESC, name ASC
 	`
 
-	rows, err := r.db.Pool.Query(ctx, query)
+	rows, err := r.db.GetReadPool().Query(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get teams with vote counts: %w", err)
 	}
@@ -336,7 +336,7 @@ func (r *VoteRepository) GetTeamByID(ctx context.Context, teamID int) (*domain.T
 		WHERE id = $1 AND is_active = true
 	`
 
-	err := r.db.Pool.QueryRow(ctx, query, teamID).Scan(
+	err := r.db.GetReadPool().QueryRow(ctx, query, teamID).Scan(
 		&team.ID,
 		&team.Code,
 		&team.Name,
@@ -363,7 +363,7 @@ func (r *VoteRepository) GetTotalVoteCount(ctx context.Context) (int, error) {
 	var count int
 	query := `SELECT COUNT(*) FROM votes`
 
-	err := r.db.Pool.QueryRow(ctx, query).Scan(&count)
+	err := r.db.GetReadPool().QueryRow(ctx, query).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get total vote count: %w", err)
 	}
@@ -494,7 +494,7 @@ func (r *VoteRepository) UpdateVoteOnly(ctx context.Context, req *domain.VoteOnl
 	// First check if user exists
 	var exists bool
 	checkQuery := `SELECT EXISTS(SELECT 1 FROM votes WHERE user_id = $1)`
-	err := r.db.Pool.QueryRow(ctx, checkQuery, req.UserID).Scan(&exists)
+	err := r.db.GetReadPool().QueryRow(ctx, checkQuery, req.UserID).Scan(&exists)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check user existence: %w", err)
 	}
@@ -505,7 +505,7 @@ func (r *VoteRepository) UpdateVoteOnly(ctx context.Context, req *domain.VoteOnl
 	// Check if user has already voted (if candidate_id is not null/0)
 	var existingCandidateID *int
 	checkVoteQuery := `SELECT team_id FROM votes WHERE user_id = $1 AND team_id IS NOT NULL AND team_id != 0`
-	err = r.db.Pool.QueryRow(ctx, checkVoteQuery, req.UserID).Scan(&existingCandidateID)
+	err = r.db.GetReadPool().QueryRow(ctx, checkVoteQuery, req.UserID).Scan(&existingCandidateID)
 	if err != nil && err != pgx.ErrNoRows {
 		return nil, fmt.Errorf("failed to check existing vote: %w", err)
 	}
@@ -578,7 +578,7 @@ func (r *VoteRepository) GetUserByPhone(ctx context.Context, normalizedPhone str
 	var fullName string
 	var teamID *int
 
-	err := r.db.Pool.QueryRow(ctx, query, normalizedPhone).Scan(
+	err := r.db.GetReadPool().QueryRow(ctx, query, normalizedPhone).Scan(
 		&vote.UserID,
 		&vote.Phone,
 		&fullName,
@@ -696,7 +696,7 @@ func (r *VoteRepository) GetWelcomeAcceptance(ctx context.Context, userID string
 	var welcomeAcceptedAt sql.NullTime
 	var rulesVersion sql.NullString
 
-	err := r.db.Pool.QueryRow(ctx, query, userID).Scan(
+	err := r.db.GetReadPool().QueryRow(ctx, query, userID).Scan(
 		&response.UserID,
 		&response.WelcomeAccepted,
 		&welcomeAcceptedAt,
@@ -740,7 +740,7 @@ func (r *VoteRepository) GetPersonalInfoByUserID(ctx context.Context, userID str
 	var welcomeAcceptedAt sql.NullTime
 	var rulesVersion sql.NullString
 
-	err := r.db.Pool.QueryRow(ctx, query, userID).Scan(
+	err := r.db.GetReadPool().QueryRow(ctx, query, userID).Scan(
 		&response.UserID,
 		&voterPhone,
 		&voterName,

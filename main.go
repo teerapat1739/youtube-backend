@@ -143,7 +143,7 @@ func main() {
 
 	// Initialize database connection
 	ctx := context.Background()
-	db, err := database.NewPostgresDB(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresDB(ctx, cfg.DatabaseURL, cfg.DatabaseReadURL)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to connect to database")
 	}
