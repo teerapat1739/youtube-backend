@@ -149,13 +149,13 @@ func main() {
 	}
 
 	// Initialize Redis connection
-	redisClient, err := redis.NewClient(cfg.RedisURL, cfg.Environment)
+	redisClient, err := redis.NewClient(cfg.RedisURL, cfg.Environment, log.Logger)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to connect to Redis")
 	}
 
 	// Initialize repositories and services
-	voteRepo := repository.NewVoteRepository(db)
+	voteRepo := repository.NewVoteRepository(db).WithLogger(log.Logger)
 	votingService := service.NewVotingService(voteRepo, redisClient, log.Logger)
 
 	// Initialize visitor service
