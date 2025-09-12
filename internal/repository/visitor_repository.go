@@ -60,7 +60,7 @@ func (r *visitorRepository) GetLatestSnapshot(ctx context.Context) (*domain.Visi
 	`
 
 	snapshot := &domain.VisitorSnapshot{}
-	err := r.db.Pool.QueryRow(ctx, query).Scan(
+	err := r.db.GetReadPool().QueryRow(ctx, query).Scan(
 		&snapshot.ID,
 		&snapshot.TotalVisits,
 		&snapshot.DailyVisits,
@@ -89,7 +89,7 @@ func (r *visitorRepository) GetSnapshotByDate(ctx context.Context, date time.Tim
 	`
 
 	snapshot := &domain.VisitorSnapshot{}
-	err := r.db.Pool.QueryRow(ctx, query, date.Format("2006-01-02")).Scan(
+	err := r.db.GetReadPool().QueryRow(ctx, query, date.Format("2006-01-02")).Scan(
 		&snapshot.ID,
 		&snapshot.TotalVisits,
 		&snapshot.DailyVisits,
@@ -115,7 +115,7 @@ func (r *visitorRepository) GetHistoricalSnapshots(ctx context.Context, startDat
 		LIMIT $3
 	`
 
-	rows, err := r.db.Pool.Query(ctx, query,
+	rows, err := r.db.GetReadPool().Query(ctx, query,
 		startDate.Format("2006-01-02"),
 		endDate.Format("2006-01-02"),
 		limit,
@@ -171,7 +171,7 @@ func (r *visitorRepository) GetSnapshotCount(ctx context.Context) (int64, error)
 	query := `SELECT COUNT(*) FROM visitor_snapshots`
 
 	var count int64
-	err := r.db.Pool.QueryRow(ctx, query).Scan(&count)
+	err := r.db.GetReadPool().QueryRow(ctx, query).Scan(&count)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get visitor snapshot count: %w", err)
 	}

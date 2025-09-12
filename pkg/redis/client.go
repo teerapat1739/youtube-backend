@@ -6,27 +6,29 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 type Client struct {
 	rdb        *redis.Client
 	KeyBuilder *KeyBuilder
+	log        *zap.Logger
 }
 
 // Cache key constants
 const (
 	// Voting related keys
-	KeyTeamsAll      = "voting:teams:all"
-	KeyTeamByID      = "voting:team:%d"           // Individual team data
-	KeyTeamCount     = "voting:team:%d:count"
-	KeyUserVoted     = "voting:user:%s:voted"
-	KeyPhoneVoted    = "voting:phone:%s:voted"    // Phone number vote status
-	KeyVoteSummary   = "voting:summary"
-	KeyVotingResults = "voting:results"           // Complete voting results with rankings
-	KeyLastUpdate    = "voting:last_update"
-	KeyETag          = "voting:etag:%s"
+	KeyTeamsAll        = "voting:teams:all"
+	KeyTeamByID        = "voting:team:%d" // Individual team data
+	KeyTeamCount       = "voting:team:%d:count"
+	KeyUserVoted       = "voting:user:%s:voted"
+	KeyPhoneVoted      = "voting:phone:%s:voted" // Phone number vote status
+	KeyVoteSummary     = "voting:summary"
+	KeyVotingResults   = "voting:results" // Complete voting results with rankings
+	KeyLastUpdate      = "voting:last_update"
+	KeyETag            = "voting:etag:%s"
 	KeyWelcomeAccepted = "welcome:user:%s:accepted" // Welcome acceptance status
-	
+
 	// Subscription related keys
 	KeySubscriptionCheck = "subscription:%s:%s"   // subscription:{userID}:{channelID}
 	
@@ -38,14 +40,14 @@ const (
 // TTL constants
 const (
 	// Voting related TTLs
-	TTLTeams       = 5 * time.Minute    // Team list cache
-	TTLTeamByID    = 15 * time.Minute   // Individual team cache (longer since teams change less frequently)
-	TTLCounts      = 30 * time.Second   // Vote counts (short TTL for real-time updates)
-	TTLUserVote    = 24 * time.Hour     // User vote status (long TTL, changes rarely)
-	TTLPhoneVote   = 2 * time.Hour      // Phone vote status (moderate TTL, balance between performance and data consistency)
-	TTLETag        = 5 * time.Minute    // ETag cache
-	TTLWelcomeAccepted = 24 * time.Hour // Welcome acceptance status (long TTL, changes rarely)
-	
+	TTLTeams           = 5 * time.Minute  // Team list cache
+	TTLTeamByID        = 15 * time.Minute // Individual team cache (longer since teams change less frequently)
+	TTLCounts          = 30 * time.Second // Vote counts (short TTL for real-time updates)
+	TTLUserVote        = 24 * time.Hour   // User vote status (long TTL, changes rarely)
+	TTLPhoneVote       = 2 * time.Hour    // Phone vote status (moderate TTL, balance between performance and data consistency)
+	TTLETag            = 5 * time.Minute  // ETag cache
+	TTLWelcomeAccepted = 24 * time.Hour   // Welcome acceptance status (long TTL, changes rarely)
+
 	// Subscription related TTLs
 	TTLSubscription = 24 * time.Hour    // Subscription status cache (24 hours as requested)
 	
@@ -55,7 +57,7 @@ const (
 )
 
 // NewClient creates a new Redis client
-func NewClient(redisURL string, environment string) (*Client, error) {
+func NewClient(redisURL string, environment string, log *zap.Logger) (*Client, error) {
 	opts, err := redis.ParseURL(redisURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Redis URL: %w", err)
@@ -82,7 +84,7 @@ func NewClient(redisURL string, environment string) (*Client, error) {
 	// Initialize key builder with environment
 	keyBuilder := NewKeyBuilder(environment)
 
-	return &Client{rdb: rdb, KeyBuilder: keyBuilder}, nil
+	return &Client{rdb: rdb, KeyBuilder: keyBuilder, log: log}, nil
 }
 
 // Close closes the Redis connection
@@ -95,52 +97,179 @@ func (c *Client) Close() error {
 
 // Get retrieves a value from Redis
 func (c *Client) Get(ctx context.Context, key string) (string, error) {
-	return c.rdb.Get(ctx, key).Result()
+	start := time.Now()
+	val, err := c.rdb.Get(ctx, key).Result()
+	dur := time.Since(start)
+	if err != nil && err != redis.Nil {
+		c.log.Info("redis_get",
+			zap.String("key_prefix", prefixForLog(key)),
+			zap.Duration("duration", dur),
+			zap.Error(err))
+	} else {
+		c.log.Debug("redis_get",
+			zap.String("key_prefix", prefixForLog(key)),
+			zap.Duration("duration", dur))
+	}
+	return val, err
 }
 
 // Set stores a value in Redis with TTL
 func (c *Client) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
-	return c.rdb.Set(ctx, key, value, ttl).Err()
+	start := time.Now()
+	err := c.rdb.Set(ctx, key, value, ttl).Err()
+	dur := time.Since(start)
+	if err != nil {
+		c.log.Info("redis_set",
+			zap.String("key_prefix", prefixForLog(key)),
+			zap.Duration("duration", dur),
+			zap.Error(err))
+	} else {
+		c.log.Debug("redis_set",
+			zap.String("key_prefix", prefixForLog(key)),
+			zap.Duration("duration", dur))
+	}
+	return err
 }
 
 // SetNX sets a value only if it doesn't exist (for duplicate vote prevention)
 func (c *Client) SetNX(ctx context.Context, key string, value interface{}, ttl time.Duration) (bool, error) {
-	return c.rdb.SetNX(ctx, key, value, ttl).Result()
+	start := time.Now()
+	ok, err := c.rdb.SetNX(ctx, key, value, ttl).Result()
+	dur := time.Since(start)
+	if err != nil {
+		c.log.Info("redis_setnx",
+			zap.String("key_prefix", prefixForLog(key)),
+			zap.Duration("duration", dur),
+			zap.Error(err))
+	} else {
+		c.log.Debug("redis_setnx",
+			zap.String("key_prefix", prefixForLog(key)),
+			zap.Bool("result", ok),
+			zap.Duration("duration", dur))
+	}
+	return ok, err
 }
 
 // Delete removes a key from Redis
 func (c *Client) Delete(ctx context.Context, keys ...string) error {
-	return c.rdb.Del(ctx, keys...).Err()
+	start := time.Now()
+	err := c.rdb.Del(ctx, keys...).Err()
+	dur := time.Since(start)
+	c.log.Debug("redis_del",
+		zap.Int("keys", len(keys)),
+		zap.Duration("duration", dur),
+		zap.Error(err))
+	return err
 }
 
 // Exists checks if a key exists
 func (c *Client) Exists(ctx context.Context, keys ...string) (int64, error) {
-	return c.rdb.Exists(ctx, keys...).Result()
+	start := time.Now()
+	n, err := c.rdb.Exists(ctx, keys...).Result()
+	dur := time.Since(start)
+	if err != nil {
+		c.log.Info("redis_exists",
+			zap.Int("keys", len(keys)),
+			zap.Duration("duration", dur),
+			zap.Error(err))
+	} else {
+		c.log.Debug("redis_exists",
+			zap.Int64("result", n),
+			zap.Int("keys", len(keys)),
+			zap.Duration("duration", dur))
+	}
+	return n, err
 }
 
 // Incr increments a counter
 func (c *Client) Incr(ctx context.Context, key string) (int64, error) {
-	return c.rdb.Incr(ctx, key).Result()
+	start := time.Now()
+	v, err := c.rdb.Incr(ctx, key).Result()
+	dur := time.Since(start)
+	if err != nil {
+		c.log.Info("redis_incr",
+			zap.String("key_prefix", prefixForLog(key)),
+			zap.Duration("duration", dur),
+			zap.Error(err))
+	} else {
+		c.log.Debug("redis_incr",
+			zap.String("key_prefix", prefixForLog(key)),
+			zap.Int64("value", v),
+			zap.Duration("duration", dur))
+	}
+	return v, err
 }
 
 // HSet sets a hash field
 func (c *Client) HSet(ctx context.Context, key string, values ...interface{}) error {
-	return c.rdb.HSet(ctx, key, values...).Err()
+	start := time.Now()
+	err := c.rdb.HSet(ctx, key, values...).Err()
+	dur := time.Since(start)
+	if err != nil {
+		c.log.Info("redis_hset",
+			zap.String("key_prefix", prefixForLog(key)),
+			zap.Int("fields", len(values)/2),
+			zap.Duration("duration", dur),
+			zap.Error(err))
+	} else {
+		c.log.Debug("redis_hset",
+			zap.String("key_prefix", prefixForLog(key)),
+			zap.Int("fields", len(values)/2),
+			zap.Duration("duration", dur))
+	}
+	return err
 }
 
 // HGetAll gets all fields from a hash
 func (c *Client) HGetAll(ctx context.Context, key string) (map[string]string, error) {
-	return c.rdb.HGetAll(ctx, key).Result()
+	start := time.Now()
+	m, err := c.rdb.HGetAll(ctx, key).Result()
+	dur := time.Since(start)
+	if err != nil {
+		c.log.Info("redis_hgetall",
+			zap.String("key_prefix", prefixForLog(key)),
+			zap.Duration("duration", dur),
+			zap.Error(err))
+	} else {
+		c.log.Debug("redis_hgetall",
+			zap.String("key_prefix", prefixForLog(key)),
+			zap.Int("fields", len(m)),
+			zap.Duration("duration", dur))
+	}
+	return m, err
 }
 
 // Expire sets a TTL on a key
 func (c *Client) Expire(ctx context.Context, key string, ttl time.Duration) error {
-	return c.rdb.Expire(ctx, key, ttl).Err()
+	start := time.Now()
+	err := c.rdb.Expire(ctx, key, ttl).Err()
+	dur := time.Since(start)
+	if err != nil {
+		c.log.Info("redis_expire",
+			zap.String("key_prefix", prefixForLog(key)),
+			zap.Duration("duration", dur),
+			zap.Error(err))
+	} else {
+		c.log.Debug("redis_expire",
+			zap.String("key_prefix", prefixForLog(key)),
+			zap.Duration("duration", dur))
+	}
+	return err
 }
 
 // Health checks the Redis connection
 func (c *Client) Health(ctx context.Context) error {
-	return c.rdb.Ping(ctx).Err()
+	start := time.Now()
+	err := c.rdb.Ping(ctx).Err()
+	dur := time.Since(start)
+	if err != nil {
+		c.log.Info("redis_ping",
+			zap.Duration("duration", dur),
+			zap.Error(err))
+	} else {
+		c.log.Debug("redis_ping", zap.Duration("duration", dur))
+	}
+	return err
 }
 
 // GetWithFallback attempts to get a value from cache, falling back to a function if not found
@@ -197,6 +326,26 @@ func (c *Client) SetMultiple(ctx context.Context, kvPairs map[string]interface{}
 	for key, value := range kvPairs {
 		pipe.Set(ctx, key, value, ttl)
 	}
+	start := time.Now()
 	_, err := pipe.Exec(ctx)
+	dur := time.Since(start)
+	if err != nil {
+		c.log.Info("redis_set_multiple",
+			zap.Int("keys", len(kvPairs)),
+			zap.Duration("duration", dur),
+			zap.Error(err))
+	} else {
+		c.log.Debug("redis_set_multiple",
+			zap.Int("keys", len(kvPairs)),
+			zap.Duration("duration", dur))
+	}
 	return err
+}
+
+// prefixForLog returns a safe prefix of a key to avoid logging PII
+func prefixForLog(key string) string {
+	if len(key) <= 24 {
+		return key
+	}
+	return key[:24] + "…"
 }

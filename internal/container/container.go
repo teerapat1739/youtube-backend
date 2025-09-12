@@ -22,7 +22,7 @@ func New(cfg *config.Config, logger *logger.Logger) (*Container, error) {
 	// Initialize Redis client if Redis URL is configured
 	var redisClient *redis.Client
 	if cfg.RedisURL != "" {
-		client, err := redis.NewClient(cfg.RedisURL, cfg.Environment)
+		client, err := redis.NewClient(cfg.RedisURL, cfg.Environment, logger.Logger)
 		if err != nil {
 			logger.WithError(err).Warn("Failed to initialize Redis client, proceeding without caching")
 		} else {

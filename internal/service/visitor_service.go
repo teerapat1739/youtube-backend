@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 	"be-v2/internal/repository"
 	"be-v2/pkg/logger"
 	"be-v2/pkg/redis"
-	goredis "github.com/redis/go-redis/v9"
 )
 
 // Redis keys for visitor tracking
@@ -44,6 +42,7 @@ const (
 type visitorService struct {
 	redisClient   *redis.Client
 	visitorRepo   repository.VisitorRepository
+	voteRepo      *repository.VoteRepository
 	logger        *logger.Logger
 	snapshotTicker *time.Ticker
 	stopSnapshot   chan struct{}
@@ -53,10 +52,11 @@ type visitorService struct {
 }
 
 // NewVisitorService creates a new visitor service
-func NewVisitorService(redisClient *redis.Client, visitorRepo repository.VisitorRepository, logger *logger.Logger, environment string) VisitorService {
+func NewVisitorService(redisClient *redis.Client, visitorRepo repository.VisitorRepository, voteRepo *repository.VoteRepository, logger *logger.Logger, environment string) VisitorService {
 	service := &visitorService{
 		redisClient:  redisClient,
 		visitorRepo:  visitorRepo,
+		voteRepo:     voteRepo,
 		logger:       logger,
 		stopSnapshot: make(chan struct{}),
 		keyPrefix:    redisClient.KeyBuilder.GetPrefix(),
@@ -187,60 +187,27 @@ func (s *visitorService) RecordVisit(ctx context.Context, ipAddress, userAgent s
 	return rateLimitInfo, nil
 }
 
-// GetStats retrieves current visitor statistics
+// GetStats retrieves current visitor statistics (now returns vote count from database)
 func (s *visitorService) GetStats(ctx context.Context) (*domain.VisitorStats, error) {
-	today := time.Now().Format("2006-01-02")
-
-	pipe := s.redisClient.Pipeline()
-
-	// Get counters
-	totalCmd := pipe.Get(ctx, s.redisClient.KeyBuilder.KeyVisitorTotal())
-	dailyCmd := pipe.Get(ctx, s.redisClient.KeyBuilder.KeyVisitorDaily(today))
-	uniqueCmd := pipe.SCard(ctx, s.redisClient.KeyBuilder.KeyVisitorUnique())
-	lastUpdateCmd := pipe.Get(ctx, s.redisClient.KeyBuilder.KeyVisitorLastUpdate())
-
-	_, err := pipe.Exec(ctx)
-	if err != nil && err != goredis.Nil {
-		s.logger.WithError(err).Error("Failed to get visitor stats")
-		return nil, fmt.Errorf("failed to get visitor stats: %w", err)
+	// Get total vote count from the database
+	totalVoteCount, err := s.voteRepo.GetTotalVoteCount(ctx)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to get total vote count")
+		return nil, fmt.Errorf("failed to get total vote count: %w", err)
 	}
 
-	// Parse results
-	stats := &domain.VisitorStats{}
-
-	// Total visits (default to 0 if key doesn't exist)
-	if total, err := totalCmd.Result(); err == nil {
-		if parsed, err := strconv.ParseInt(total, 10, 64); err == nil {
-			stats.TotalVisits = parsed
-		}
-	} else if err == goredis.Nil {
-		stats.TotalVisits = 0
+	// Create stats object with vote count as total visits
+	// Keep the same structure to maintain frontend compatibility
+	stats := &domain.VisitorStats{
+		TotalVisits:  int64(totalVoteCount), // Use vote count as total visits
+		DailyVisits:  0,                     // Not tracking daily votes currently
+		UniqueVisits: int64(totalVoteCount), // Use vote count as unique visits for consistency
+		LastUpdated:  time.Now(),
 	}
 
-	// Daily visits (default to 0 if key doesn't exist)
-	if daily, err := dailyCmd.Result(); err == nil {
-		if parsed, err := strconv.ParseInt(daily, 10, 64); err == nil {
-			stats.DailyVisits = parsed
-		}
-	} else if err == goredis.Nil {
-		stats.DailyVisits = 0
-	}
-
-	// Unique visits (default to 0 if key doesn't exist)
-	if unique, err := uniqueCmd.Result(); err == nil {
-		stats.UniqueVisits = unique
-	} else if err == goredis.Nil {
-		stats.UniqueVisits = 0
-	}
-
-	// Last updated (use current time if key doesn't exist)
-	if lastUpdate, err := lastUpdateCmd.Result(); err == nil {
-		if parsed, err := strconv.ParseInt(lastUpdate, 10, 64); err == nil {
-			stats.LastUpdated = time.Unix(parsed, 0)
-		}
-	} else {
-		stats.LastUpdated = time.Now()
-	}
+	s.logger.WithFields(map[string]interface{}{
+		"total_vote_count": totalVoteCount,
+	}).Debug("Vote count retrieved successfully")
 
 	return stats, nil
 }
