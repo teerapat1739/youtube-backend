@@ -69,12 +69,7 @@ func (r *VoteRepository) CreateVote(ctx context.Context, vote *domain.Vote) erro
 	}
 	r.log.Debug("db_insert_votes", zap.Duration("duration", dur))
 
-	// Refresh materialized view asynchronously
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = r.db.RefreshMaterializedView(ctx)
-	}()
+	// Note: Materialized view refresh moved to a periodic background task
 
 	return nil
 }
@@ -96,7 +91,7 @@ func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*d
 	var dataRetentionUntil sql.NullTime
 	var welcomeAcceptedAt sql.NullTime
 	var rulesVersion sql.NullString
-	
+
 	query := `
 		SELECT id, vote_id, user_id, team_id, voter_name, voter_email, voter_phone, 
 		       favorite_video, ip_address, user_agent, consent_timestamp, consent_ip,
@@ -538,7 +533,6 @@ func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, userID string, 
 	return &response, nil
 }
 
-
 // UpdateVoteOnly updates only the vote-related fields for an existing user
 func (r *VoteRepository) UpdateVoteOnly(ctx context.Context, req *domain.VoteOnlyRequest) (*domain.VoteOnlyResponse, error) {
 	// First check if user exists
@@ -617,12 +611,7 @@ func (r *VoteRepository) UpdateVoteOnly(ctx context.Context, req *domain.VoteOnl
 	}
 	response.Message = "Vote submitted successfully"
 
-	// Refresh materialized view asynchronously
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = r.db.RefreshMaterializedView(ctx)
-	}()
+	// Note: Materialized view refresh moved to a periodic background task
 
 	return &response, nil
 }
@@ -741,8 +730,8 @@ func (r *VoteRepository) SaveWelcomeAcceptance(ctx context.Context, userID, rule
 		`
 
 		start := time.Now()
-		_, err = r.db.Pool.Exec(ctx, insertQuery, 
-			userID,        // user_id
+		_, err = r.db.Pool.Exec(ctx, insertQuery,
+			userID,       // user_id
 			"",           // voter_name (empty, will be filled later)
 			"",           // voter_email (empty, will be filled later)
 			nil,          // voter_phone (NULL, will be filled later - avoids unique constraint)

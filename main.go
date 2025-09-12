@@ -167,6 +167,19 @@ func main() {
 		log.WithError(err).Fatal("Failed to start visitor service")
 	}
 
+	// Start periodic materialized view refresher (every 15 seconds)
+	go func() {
+		refreshTicker := time.NewTicker(15 * time.Second)
+		defer refreshTicker.Stop()
+		for range refreshTicker.C {
+			refreshCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := db.RefreshMaterializedView(refreshCtx); err != nil {
+				log.WithError(err).Warn("Failed to refresh materialized view")
+			}
+			cancel()
+		}
+	}()
+
 	// Setup router
 	router := setupRouter(container, votingService, visitorService, db)
 

@@ -25,7 +25,7 @@ func main() {
 
 	// Get command
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run main.go [drop|up|seed|cleanup|phone-migration|welcome-tracking|fix-vote-id]")
+		fmt.Println("Usage: go run main.go [drop|up|seed|cleanup|phone-migration|welcome-tracking|fix-vote-id|fix-phone-constraint|add-team-image|add-performance-indexes]")
 		os.Exit(1)
 	}
 
@@ -94,9 +94,15 @@ func main() {
 		}
 		fmt.Println("✅ Team image migration completed successfully")
 
+	case "add-performance-indexes":
+		if err := runAddPerformanceIndexes(ctx, conn); err != nil {
+			log.Fatalf("Failed to run performance indexes migration: %v", err)
+		}
+		fmt.Println("✅ Performance indexes migration completed successfully")
+
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
-		fmt.Println("Usage: go run main.go [drop|up|seed|cleanup|phone-migration|welcome-tracking|fix-vote-id|fix-phone-constraint|add-team-image]")
+		fmt.Println("Usage: go run main.go [drop|up|seed|cleanup|phone-migration|welcome-tracking|fix-vote-id|fix-phone-constraint|add-team-image|add-performance-indexes]")
 		os.Exit(1)
 	}
 }
@@ -380,5 +386,24 @@ func runAddTeamImageMigration(ctx context.Context, conn *pgx.Conn) error {
 	fmt.Println("  ✅ Updated team records with image filenames")
 	fmt.Println("  ✅ Materialized view updated to include image filenames")
 
+	return nil
+}
+
+func runAddPerformanceIndexes(ctx context.Context, conn *pgx.Conn) error {
+	sqlFile := "migrations/add_performance_indexes.sql"
+	if _, err := os.Stat(sqlFile); os.IsNotExist(err) {
+		return fmt.Errorf("migration file not found: %s", sqlFile)
+	}
+
+	sqlBytes, err := ioutil.ReadFile(sqlFile)
+	if err != nil {
+		return fmt.Errorf("failed to read migration file: %w", err)
+	}
+
+	if _, err := conn.Exec(ctx, string(sqlBytes)); err != nil {
+		return fmt.Errorf("failed to execute performance indexes migration: %w", err)
+	}
+
+	fmt.Println("  ✅ Performance indexes added/verified and ANALYZE executed")
 	return nil
 }
