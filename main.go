@@ -160,7 +160,7 @@ func main() {
 
 	// Initialize visitor service
 	visitorRepo := repository.NewVisitorRepository(db)
-	visitorService := service.NewVisitorService(redisClient, visitorRepo, log, cfg.Environment)
+	visitorService := service.NewVisitorService(redisClient, visitorRepo, voteRepo, log, cfg.Environment)
 
 	// Start visitor service
 	if err := visitorService.Start(ctx); err != nil {
