@@ -172,12 +172,12 @@ func main() {
 
 	// Create HTTP server with optimized timeouts for high load
 	server := &http.Server{
-		Addr:         ":" + cfg.Port,
-		Handler:      router,
-		ReadTimeout:  10 * time.Second,  // Reduced for faster failure detection
-		WriteTimeout: 10 * time.Second,  // Reduced for faster failure detection
-		IdleTimeout:  120 * time.Second, // Increased for connection reuse
-		MaxHeaderBytes: 1 << 20,         // 1MB max header size
+		Addr:           ":" + cfg.Port,
+		Handler:        router,
+		ReadTimeout:    10 * time.Second,  // Reduced for faster failure detection
+		WriteTimeout:   60 * time.Second,  // Increased to align with upstream timeouts
+		IdleTimeout:    120 * time.Second, // Increased for connection reuse
+		MaxHeaderBytes: 1 << 20,           // 1MB max header size
 	}
 
 	// Create resources manager for cleanup

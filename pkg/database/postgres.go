@@ -21,12 +21,12 @@ func NewPostgresDB(ctx context.Context, databaseURL, readDatabaseURL string) (*P
 		return nil, fmt.Errorf("failed to parse database URL: %w", err)
 	}
 
-	// Configure connection pool for Cloud Run with optimized settings
-	// Reduced to prevent overwhelming Neon with 20-150 instances
-	writeConfig.MaxConns = 8  // Reduced from 10
-	writeConfig.MinConns = 2
-	writeConfig.MaxConnLifetime = time.Minute * 5  // Reduced from 1 hour
-	writeConfig.MaxConnIdleTime = time.Minute * 2   // Reduced from 30 minutes
+	// Configure connection pool for Cloud Run concurrency and increased throughput
+	// With containerConcurrency 80 and higher autoscale, allow more DB concurrency per instance
+	writeConfig.MaxConns = 50 // allow more concurrent write queries per instance
+	writeConfig.MinConns = 5
+	writeConfig.MaxConnLifetime = time.Minute * 15 // Increased for connection reuse
+	writeConfig.MaxConnIdleTime = time.Minute * 5  // Balanced for performance
 	writeConfig.HealthCheckPeriod = time.Minute
 	writeConfig.ConnConfig.ConnectTimeout = time.Second * 5
 
@@ -51,12 +51,11 @@ func NewPostgresDB(ctx context.Context, databaseURL, readDatabaseURL string) (*P
 			return nil, fmt.Errorf("failed to parse read database URL: %w", err)
 		}
 
-		// Configure read pool with optimized settings for Cloud Run scaling
-		// Reduced to work with 20-150 instances without overwhelming Neon
-		readConfig.MaxConns = 12  // Reduced from 15
-		readConfig.MinConns = 3
-		readConfig.MaxConnLifetime = time.Minute * 5  // Reduced from 1 hour
-		readConfig.MaxConnIdleTime = time.Minute * 2   // Reduced from 30 minutes
+		// Configure read pool for high-throughput read operations (80% of traffic)
+		readConfig.MaxConns = 80 // allow higher parallelism for read-heavy workload
+		readConfig.MinConns = 8
+		readConfig.MaxConnLifetime = time.Minute * 15 // Increased for connection reuse
+		readConfig.MaxConnIdleTime = time.Minute * 5  // Balanced for performance
 		readConfig.HealthCheckPeriod = time.Minute
 		readConfig.ConnConfig.ConnectTimeout = time.Second * 5
 
