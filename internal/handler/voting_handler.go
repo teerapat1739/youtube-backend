@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"be-v2/internal/domain"
 	"be-v2/internal/middleware"
@@ -547,29 +548,42 @@ func (h *VotingHandler) SubmitVoteOnly(w http.ResponseWriter, r *http.Request) {
 
 // validatePersonalInfoRequest validates the personal info request
 func (h *VotingHandler) validatePersonalInfoRequest(req *domain.PersonalInfoRequest) error {
-	if req.FirstName == "" || len(req.FirstName) < 2 {
-		return fmt.Errorf("first name is required (min 2 characters)")
+	// Validate first name - Unicode character count
+	firstNameCharCount := utf8.RuneCountInString(req.FirstName)
+	if req.FirstName == "" || firstNameCharCount < 2 {
+		return fmt.Errorf("ชื่อจริงต้องมีอย่างน้อย 2 ตัวอักษร")
 	}
 
-	if req.LastName == "" || len(req.LastName) < 2 {
-		return fmt.Errorf("last name is required (min 2 characters)")
+	// Validate last name - Unicode character count
+	lastNameCharCount := utf8.RuneCountInString(req.LastName)
+	if req.LastName == "" || lastNameCharCount < 2 {
+		return fmt.Errorf("นามสกุลต้องมีอย่างน้อย 2 ตัวอักษร")
+	}
+
+	// Validate combined first name + last name length
+	combinedCharCount := firstNameCharCount + lastNameCharCount
+	if combinedCharCount > 255 {
+		return fmt.Errorf("ชื่อและนามสกุลรวมกันต้องไม่เกิน 255 ตัวอักษร (ปัจจุบัน: %d ตัวอักษร)", combinedCharCount)
 	}
 
 	if req.Email == "" || !strings.Contains(req.Email, "@") {
-		return fmt.Errorf("valid email is required")
+		return fmt.Errorf("กรุณาระบุอีเมลที่ถูกต้อง")
 	}
 
 	if req.Phone == "" || len(req.Phone) < 10 {
-		return fmt.Errorf("phone number is required (min 10 digits)")
+		return fmt.Errorf("หมายเลขโทรศัพท์ต้องมีอย่างน้อย 10 หลัก")
 	}
 
 	// Validate favorite video field (optional but limited to 1000 characters)
-	if len(req.FavoriteVideo) > 1000 {
-		return fmt.Errorf("favorite video field cannot exceed 1000 characters")
+	// Count Unicode characters (runes), not bytes
+	favoriteVideoCharCount := utf8.RuneCountInString(req.FavoriteVideo)
+	if favoriteVideoCharCount > 1000 {
+		fmt.Printf("[DEBUG] validatePersonalInfoRequest: favorite video field cannot exceed 1000 characters: %s\n character count: %d, byte length: %d", req.FavoriteVideo, favoriteVideoCharCount, len(req.FavoriteVideo))
+		return fmt.Errorf("คำตอบต้องไม่เกิน 1000 ตัวอักษร (ปัจจุบัน: %d ตัวอักษร)", favoriteVideoCharCount)
 	}
 
 	if !req.ConsentPDPA {
-		return fmt.Errorf("PDPA consent is required to proceed")
+		return fmt.Errorf("จำเป็นต้องยอมรับข้อตกลง PDPA เพื่อดำเนินการต่อ")
 	}
 
 	return nil
