@@ -35,6 +35,16 @@ func NewVotingService(voteRepo *repository.VoteRepository, redisClient *redis.Cl
 	}
 }
 
+// TryIdempotencyLock attempts to acquire an idempotency lock for the given key.
+// Returns true if acquired (first time), false if the key already exists (duplicate within TTL).
+func (s *VotingService) TryIdempotencyLock(ctx context.Context, key string, ttl time.Duration) (bool, error) {
+	if s.redis == nil {
+		return true, nil
+	}
+	idemKey := s.redis.KeyBuilder.KeyCustom("idem:%s", key)
+	return s.redis.SetNX(ctx, idemKey, "1", ttl)
+}
+
 // SubmitVote handles vote submission with duplicate prevention
 func (s *VotingService) SubmitVote(ctx context.Context, userID string, req *domain.VoteRequest, ipAddress, userAgent string) (*domain.VoteResponse, error) {
 	// Normalize and validate phone number
@@ -668,11 +678,11 @@ func (s *VotingService) GetUserStatus(ctx context.Context, userID string) (*doma
 	}
 
 	response := &domain.UserStatusResponse{
-		UserID:            userID,
-		WelcomeAccepted:   false,
-		HasPersonalInfo:   false,
-		HasVoted:          false,
-		CurrentStep:       "welcome",
+		UserID:          userID,
+		WelcomeAccepted: false,
+		HasPersonalInfo: false,
+		HasVoted:        false,
+		CurrentStep:     "welcome",
 	}
 
 	// If no record exists, user needs to accept welcome
@@ -690,7 +700,7 @@ func (s *VotingService) GetUserStatus(ctx context.Context, userID string) (*doma
 		// Check if user has personal info (phone number is required field)
 		if userRecord.Phone != "" || userRecord.VoterPhone != "" {
 			response.HasPersonalInfo = true
-			
+
 			// Check if user has voted (vote_id exists and team_id/candidate_id is set)
 			if userRecord.VoteID != "" && (userRecord.TeamID > 0 || userRecord.CandidateID > 0) {
 				response.HasVoted = true
