@@ -17,6 +17,7 @@ type Config struct {
 	YouTubeChannelID  string
 	LogLevel          string
 	DatabaseURL       string
+	DatabaseReadURL   string // Read replica URL for SELECT queries
 	RedisURL          string
 	SupabaseURL       string
 	SupabaseJWTSecret string
@@ -36,6 +37,7 @@ func Load() (*Config, error) {
 		YouTubeChannelID:  getEnv("YOUTUBE_CHANNEL_ID", "UC-chqi3Gpb4F7yBqedlnq5g"),
 		LogLevel:          getEnv("LOG_LEVEL", "info"),
 		DatabaseURL:       getEnv("DATABASE_URL", ""),
+		DatabaseReadURL:   getEnv("DATABASE_READ_URL", getEnv("DATABASE_URL", "")), // Falls back to write DB if not set
 		RedisURL:          getEnv("REDIS_URL", ""),
 		SupabaseURL:       getEnv("SUPABASE_URL", ""),
 		SupabaseJWTSecret: getEnv("SUPABASE_JWT_SECRET", ""),

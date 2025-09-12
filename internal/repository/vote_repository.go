@@ -13,14 +13,22 @@ import (
 	"be-v2/pkg/database"
 
 	"github.com/jackc/pgx/v5"
+	"go.uber.org/zap"
 )
 
 type VoteRepository struct {
-	db *database.PostgresDB
+	db  *database.PostgresDB
+	log *zap.Logger
 }
 
 func NewVoteRepository(db *database.PostgresDB) *VoteRepository {
-	return &VoteRepository{db: db}
+	return &VoteRepository{db: db, log: zap.NewNop()}
+}
+
+// WithLogger sets a logger for this repository
+func (r *VoteRepository) WithLogger(log *zap.Logger) *VoteRepository {
+	r.log = log
+	return r
 }
 
 // CreateVote creates a new vote record with PDPA compliance
@@ -35,6 +43,7 @@ func (r *VoteRepository) CreateVote(ctx context.Context, vote *domain.Vote) erro
 		RETURNING id, created_at
 	`
 
+	start := time.Now()
 	err := r.db.Pool.QueryRow(ctx, query,
 		vote.VoteID,
 		vote.UserID,
@@ -52,17 +61,15 @@ func (r *VoteRepository) CreateVote(ctx context.Context, vote *domain.Vote) erro
 		vote.MarketingConsent,
 		vote.DataRetentionUntil,
 	).Scan(&vote.ID, &vote.CreatedAt)
+	dur := time.Since(start)
 
 	if err != nil {
+		r.log.Info("db_insert_votes", zap.Duration("duration", dur), zap.Error(err))
 		return fmt.Errorf("failed to create vote: %w", err)
 	}
+	r.log.Debug("db_insert_votes", zap.Duration("duration", dur))
 
-	// Refresh materialized view asynchronously
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = r.db.RefreshMaterializedView(ctx)
-	}()
+	// Note: Materialized view refresh moved to a periodic background task
 
 	return nil
 }
@@ -84,7 +91,7 @@ func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*d
 	var dataRetentionUntil sql.NullTime
 	var welcomeAcceptedAt sql.NullTime
 	var rulesVersion sql.NullString
-	
+
 	query := `
 		SELECT id, vote_id, user_id, team_id, voter_name, voter_email, voter_phone, 
 		       favorite_video, ip_address, user_agent, consent_timestamp, consent_ip,
@@ -95,7 +102,8 @@ func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*d
 		WHERE user_id = $1
 	`
 
-	err := r.db.Pool.QueryRow(ctx, query, userID).Scan(
+	start := time.Now()
+	err := r.db.GetReadPool().QueryRow(ctx, query, userID).Scan(
 		&vote.ID,
 		&voteID, // Use nullable version
 		&vote.UserID,
@@ -117,13 +125,16 @@ func (r *VoteRepository) GetVoteByUserID(ctx context.Context, userID string) (*d
 		&welcomeAcceptedAt,
 		&rulesVersion,
 	)
+	dur := time.Since(start)
 
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
+		r.log.Info("db_get_vote_by_user_id", zap.Duration("duration", dur), zap.Error(err))
 		return nil, fmt.Errorf("failed to get vote: %w", err)
 	}
+	r.log.Debug("db_get_vote_by_user_id", zap.Duration("duration", dur))
 
 	// Handle nullable fields
 	if voteID.Valid {
@@ -196,7 +207,8 @@ func (r *VoteRepository) GetVoteByVoteID(ctx context.Context, voteID string) (*d
 		WHERE vote_id = $1
 	`
 
-	err := r.db.Pool.QueryRow(ctx, query, voteID).Scan(
+	start := time.Now()
+	err := r.db.GetReadPool().QueryRow(ctx, query, voteID).Scan(
 		&vote.ID,
 		&vote.VoteID,
 		&vote.UserID,
@@ -215,13 +227,16 @@ func (r *VoteRepository) GetVoteByVoteID(ctx context.Context, voteID string) (*d
 		&vote.DataRetentionUntil,
 		&vote.CreatedAt,
 	)
+	dur := time.Since(start)
 
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
+		r.log.Info("db_get_vote_by_vote_id", zap.Duration("duration", dur), zap.Error(err))
 		return nil, fmt.Errorf("failed to get vote by ID: %w", err)
 	}
+	r.log.Debug("db_get_vote_by_vote_id", zap.Duration("duration", dur))
 
 	// Handle nullable team_id
 	if teamID.Valid {
@@ -246,7 +261,8 @@ func (r *VoteRepository) GetVoteByPhone(ctx context.Context, phone string) (*dom
 		WHERE voter_phone = $1
 	`
 
-	err := r.db.Pool.QueryRow(ctx, query, phone).Scan(
+	start := time.Now()
+	err := r.db.GetReadPool().QueryRow(ctx, query, phone).Scan(
 		&vote.ID,
 		&voteID, // Use nullable version
 		&vote.UserID,
@@ -265,13 +281,16 @@ func (r *VoteRepository) GetVoteByPhone(ctx context.Context, phone string) (*dom
 		&vote.DataRetentionUntil,
 		&vote.CreatedAt,
 	)
+	dur := time.Since(start)
 
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
+		r.log.Info("db_get_vote_by_phone", zap.Duration("duration", dur), zap.Error(err))
 		return nil, fmt.Errorf("failed to get vote by phone: %w", err)
 	}
+	r.log.Debug("db_get_vote_by_phone", zap.Duration("duration", dur))
 
 	// Handle nullable fields
 	if voteID.Valid {
@@ -293,10 +312,15 @@ func (r *VoteRepository) GetTeamsWithVoteCounts(ctx context.Context) ([]domain.T
 		ORDER BY vote_count DESC, name ASC
 	`
 
-	rows, err := r.db.Pool.Query(ctx, query)
+	start := time.Now()
+	rows, err := r.db.GetReadPool().Query(ctx, query)
+	dur := time.Since(start)
+
 	if err != nil {
+		r.log.Info("db_get_teams_with_vote_counts", zap.Duration("duration", dur), zap.Error(err))
 		return nil, fmt.Errorf("failed to get teams with vote counts: %w", err)
 	}
+	r.log.Debug("db_get_teams_with_vote_counts", zap.Duration("duration", dur))
 	defer rows.Close()
 
 	var teams []domain.Team
@@ -318,6 +342,7 @@ func (r *VoteRepository) GetTeamsWithVoteCounts(ctx context.Context) ([]domain.T
 			team.ImageFilename = imageFilename.String
 		}
 		if err != nil {
+			r.log.Info("scan_team", zap.Error(err))
 			return nil, fmt.Errorf("failed to scan team: %w", err)
 		}
 		team.IsActive = true
@@ -336,7 +361,8 @@ func (r *VoteRepository) GetTeamByID(ctx context.Context, teamID int) (*domain.T
 		WHERE id = $1 AND is_active = true
 	`
 
-	err := r.db.Pool.QueryRow(ctx, query, teamID).Scan(
+	start := time.Now()
+	err := r.db.GetReadPool().QueryRow(ctx, query, teamID).Scan(
 		&team.ID,
 		&team.Code,
 		&team.Name,
@@ -347,13 +373,16 @@ func (r *VoteRepository) GetTeamByID(ctx context.Context, teamID int) (*domain.T
 		&team.CreatedAt,
 		&team.UpdatedAt,
 	)
+	dur := time.Since(start)
 
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
+		r.log.Info("db_get_team_by_id", zap.Duration("duration", dur), zap.Error(err))
 		return nil, fmt.Errorf("failed to get team: %w", err)
 	}
+	r.log.Debug("db_get_team_by_id", zap.Duration("duration", dur))
 
 	return &team, nil
 }
@@ -363,10 +392,15 @@ func (r *VoteRepository) GetTotalVoteCount(ctx context.Context) (int, error) {
 	var count int
 	query := `SELECT COUNT(*) FROM votes`
 
-	err := r.db.Pool.QueryRow(ctx, query).Scan(&count)
+	start := time.Now()
+	err := r.db.GetReadPool().QueryRow(ctx, query).Scan(&count)
+	dur := time.Since(start)
+
 	if err != nil {
+		r.log.Info("db_get_total_vote_count", zap.Duration("duration", dur), zap.Error(err))
 		return 0, fmt.Errorf("failed to get total vote count: %w", err)
 	}
+	r.log.Debug("db_get_total_vote_count", zap.Duration("duration", dur))
 
 	return count, nil
 }
@@ -382,17 +416,20 @@ func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, userID string, 
 	// First, check if the current user already has a record
 	existingUserRecord, err := r.GetVoteByUserID(ctx, userID)
 	if err != nil {
+		r.log.Info("db_upsert_personal_info_check_existing", zap.Error(err))
 		return nil, fmt.Errorf("failed to check existing user record: %w", err)
 	}
 
 	// Check if phone number is already used by another user (not the current user)
 	existingPhoneUser, err := r.GetUserByPhone(ctx, normalizedPhone)
 	if err != nil {
+		r.log.Info("db_upsert_personal_info_check_phone_uniqueness", zap.Error(err))
 		return nil, fmt.Errorf("failed to check phone uniqueness: %w", err)
 	}
 
 	// If phone is used by another user (different userID), reject the request
 	if existingPhoneUser != nil && existingPhoneUser.UserID != userID {
+		r.log.Info("db_upsert_personal_info_phone_already_used", zap.String("user_id", userID), zap.String("normalized_phone", normalizedPhone))
 		return nil, fmt.Errorf("phone number already registered by another user")
 	}
 
@@ -409,6 +446,7 @@ func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, userID string, 
 			RETURNING user_id, voter_phone, voter_name, voter_email, favorite_video, created_at, NOW()
 		`
 
+		start := time.Now()
 		err = r.db.Pool.QueryRow(ctx, updateQuery,
 			userID,
 			normalizedPhone,
@@ -430,10 +468,13 @@ func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, userID string, 
 			&response.CreatedAt,
 			&response.UpdatedAt,
 		)
+		dur := time.Since(start)
 
 		if err != nil {
+			r.log.Info("db_upsert_personal_info_update_existing", zap.Duration("duration", dur), zap.Error(err))
 			return nil, fmt.Errorf("failed to update existing user: %w", err)
 		}
+		r.log.Debug("db_upsert_personal_info_update_existing", zap.Duration("duration", dur))
 	} else {
 		// User doesn't exist - create new record WITHOUT vote_id (vote_id should only be created when actually voting)
 		insertQuery := `
@@ -446,6 +487,7 @@ func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, userID string, 
 			RETURNING user_id, voter_phone, voter_name, voter_email, favorite_video, created_at, created_at
 		`
 
+		start := time.Now()
 		err = r.db.Pool.QueryRow(ctx, insertQuery,
 			userID,
 			normalizedPhone,
@@ -467,10 +509,13 @@ func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, userID string, 
 			&response.CreatedAt,
 			&response.UpdatedAt,
 		)
+		dur := time.Since(start)
 
 		if err != nil {
+			r.log.Info("db_upsert_personal_info_insert_new", zap.Duration("duration", dur), zap.Error(err))
 			return nil, fmt.Errorf("failed to insert new user: %w", err)
 		}
+		r.log.Debug("db_upsert_personal_info_insert_new", zap.Duration("duration", dur))
 	}
 
 	// Split the full name back
@@ -488,16 +533,20 @@ func (r *VoteRepository) UpsertPersonalInfo(ctx context.Context, userID string, 
 	return &response, nil
 }
 
-
 // UpdateVoteOnly updates only the vote-related fields for an existing user
 func (r *VoteRepository) UpdateVoteOnly(ctx context.Context, req *domain.VoteOnlyRequest) (*domain.VoteOnlyResponse, error) {
 	// First check if user exists
 	var exists bool
 	checkQuery := `SELECT EXISTS(SELECT 1 FROM votes WHERE user_id = $1)`
-	err := r.db.Pool.QueryRow(ctx, checkQuery, req.UserID).Scan(&exists)
+	start := time.Now()
+	err := r.db.GetReadPool().QueryRow(ctx, checkQuery, req.UserID).Scan(&exists)
+	dur := time.Since(start)
+
 	if err != nil {
+		r.log.Info("db_update_vote_only_check_existence", zap.Duration("duration", dur), zap.Error(err))
 		return nil, fmt.Errorf("failed to check user existence: %w", err)
 	}
+	r.log.Debug("db_update_vote_only_check_existence", zap.Duration("duration", dur))
 	if !exists {
 		return nil, domain.ErrUserNotFound
 	}
@@ -505,10 +554,15 @@ func (r *VoteRepository) UpdateVoteOnly(ctx context.Context, req *domain.VoteOnl
 	// Check if user has already voted (if candidate_id is not null/0)
 	var existingCandidateID *int
 	checkVoteQuery := `SELECT team_id FROM votes WHERE user_id = $1 AND team_id IS NOT NULL AND team_id != 0`
-	err = r.db.Pool.QueryRow(ctx, checkVoteQuery, req.UserID).Scan(&existingCandidateID)
+	start = time.Now()
+	err = r.db.GetReadPool().QueryRow(ctx, checkVoteQuery, req.UserID).Scan(&existingCandidateID)
+	dur = time.Since(start)
+
 	if err != nil && err != pgx.ErrNoRows {
+		r.log.Info("db_update_vote_only_check_existing_vote", zap.Duration("duration", dur), zap.Error(err))
 		return nil, fmt.Errorf("failed to check existing vote: %w", err)
 	}
+	r.log.Debug("db_update_vote_only_check_existing_vote", zap.Duration("duration", dur))
 
 	// If user has already voted, prevent change (since we don't have vote_status, all votes are considered finalized)
 	if existingCandidateID != nil {
@@ -534,15 +588,19 @@ func (r *VoteRepository) UpdateVoteOnly(ctx context.Context, req *domain.VoteOnl
 	var returnedVoteID *string
 
 	var createdAt time.Time
+	start = time.Now()
 	err = r.db.Pool.QueryRow(ctx, updateQuery,
 		req.UserID,
 		req.CandidateID,
 		voteID,
 	).Scan(&candidateID, &createdAt, &returnedVoteID)
+	dur = time.Since(start)
 
 	if err != nil {
+		r.log.Info("db_update_vote_only_error", zap.Duration("duration", dur), zap.Error(err))
 		return nil, fmt.Errorf("failed to update vote: %w", err)
 	}
+	r.log.Debug("db_update_vote_only", zap.Duration("duration", dur))
 
 	response.UserID = req.UserID
 	response.CandidateID = candidateID
@@ -553,12 +611,7 @@ func (r *VoteRepository) UpdateVoteOnly(ctx context.Context, req *domain.VoteOnl
 	}
 	response.Message = "Vote submitted successfully"
 
-	// Refresh materialized view asynchronously
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = r.db.RefreshMaterializedView(ctx)
-	}()
+	// Note: Materialized view refresh moved to a periodic background task
 
 	return &response, nil
 }
@@ -578,7 +631,8 @@ func (r *VoteRepository) GetUserByPhone(ctx context.Context, normalizedPhone str
 	var fullName string
 	var teamID *int
 
-	err := r.db.Pool.QueryRow(ctx, query, normalizedPhone).Scan(
+	start := time.Now()
+	err := r.db.GetReadPool().QueryRow(ctx, query, normalizedPhone).Scan(
 		&vote.UserID,
 		&vote.Phone,
 		&fullName,
@@ -593,13 +647,16 @@ func (r *VoteRepository) GetUserByPhone(ctx context.Context, normalizedPhone str
 		&vote.DataRetentionUntil,
 		&vote.CreatedAt,
 	)
+	dur := time.Since(start)
 
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
+		r.log.Info("db_get_user_by_phone", zap.Duration("duration", dur), zap.Error(err))
 		return nil, fmt.Errorf("failed to get user by phone: %w", err)
 	}
+	r.log.Debug("db_get_user_by_phone", zap.Duration("duration", dur))
 
 	// Parse full name
 	names := strings.Fields(fullName)
@@ -649,10 +706,15 @@ func (r *VoteRepository) SaveWelcomeAcceptance(ctx context.Context, userID, rule
 		WHERE user_id = $1
 	`
 
+	start := time.Now()
 	result, err := r.db.Pool.Exec(ctx, updateQuery, userID, acceptedAt, rulesVersion)
+	dur := time.Since(start)
+
 	if err != nil {
+		r.log.Info("db_save_welcome_acceptance_update", zap.Duration("duration", dur), zap.Error(err))
 		return fmt.Errorf("failed to save welcome acceptance: %w", err)
 	}
+	r.log.Debug("db_save_welcome_acceptance_update", zap.Duration("duration", dur))
 
 	// If no rows were affected, user doesn't exist yet - create new record
 	if result.RowsAffected() == 0 {
@@ -667,8 +729,9 @@ func (r *VoteRepository) SaveWelcomeAcceptance(ctx context.Context, userID, rule
 			VALUES ($1, $2, $3, $4, $5, $6, $7)
 		`
 
-		_, err = r.db.Pool.Exec(ctx, insertQuery, 
-			userID,        // user_id
+		start := time.Now()
+		_, err = r.db.Pool.Exec(ctx, insertQuery,
+			userID,       // user_id
 			"",           // voter_name (empty, will be filled later)
 			"",           // voter_email (empty, will be filled later)
 			nil,          // voter_phone (NULL, will be filled later - avoids unique constraint)
@@ -676,9 +739,13 @@ func (r *VoteRepository) SaveWelcomeAcceptance(ctx context.Context, userID, rule
 			acceptedAt,   // welcome_accepted_at
 			rulesVersion, // rules_version
 		)
+		dur = time.Since(start)
+
 		if err != nil {
+			r.log.Info("db_save_welcome_acceptance_insert", zap.Duration("duration", dur), zap.Error(err))
 			return fmt.Errorf("failed to create welcome acceptance record: %w", err)
 		}
+		r.log.Debug("db_save_welcome_acceptance_insert", zap.Duration("duration", dur))
 	}
 
 	return nil
@@ -696,19 +763,23 @@ func (r *VoteRepository) GetWelcomeAcceptance(ctx context.Context, userID string
 	var welcomeAcceptedAt sql.NullTime
 	var rulesVersion sql.NullString
 
-	err := r.db.Pool.QueryRow(ctx, query, userID).Scan(
+	start := time.Now()
+	err := r.db.GetReadPool().QueryRow(ctx, query, userID).Scan(
 		&response.UserID,
 		&response.WelcomeAccepted,
 		&welcomeAcceptedAt,
 		&rulesVersion,
 	)
+	dur := time.Since(start)
 
 	if err == pgx.ErrNoRows {
 		return nil, nil // User not found
 	}
 	if err != nil {
+		r.log.Info("db_get_welcome_acceptance", zap.Duration("duration", dur), zap.Error(err))
 		return nil, fmt.Errorf("failed to get welcome acceptance: %w", err)
 	}
+	r.log.Debug("db_get_welcome_acceptance", zap.Duration("duration", dur))
 
 	if welcomeAcceptedAt.Valid {
 		response.WelcomeAcceptedAt = welcomeAcceptedAt.Time
@@ -740,7 +811,8 @@ func (r *VoteRepository) GetPersonalInfoByUserID(ctx context.Context, userID str
 	var welcomeAcceptedAt sql.NullTime
 	var rulesVersion sql.NullString
 
-	err := r.db.Pool.QueryRow(ctx, query, userID).Scan(
+	start := time.Now()
+	err := r.db.GetReadPool().QueryRow(ctx, query, userID).Scan(
 		&response.UserID,
 		&voterPhone,
 		&voterName,
@@ -755,13 +827,17 @@ func (r *VoteRepository) GetPersonalInfoByUserID(ctx context.Context, userID str
 		&welcomeAcceptedAt,
 		&rulesVersion,
 	)
+	dur := time.Since(start)
 
 	if err != nil {
 		if err == pgx.ErrNoRows {
+			r.log.Info("db_get_personal_info_not_found", zap.String("user_id", userID))
 			return nil, fmt.Errorf("personal info not found for user_id: %s", userID)
 		}
+		r.log.Info("db_get_personal_info", zap.Duration("duration", dur), zap.Error(err))
 		return nil, fmt.Errorf("failed to get personal info: %w", err)
 	}
+	r.log.Debug("db_get_personal_info", zap.Duration("duration", dur))
 
 	// Handle nullable fields
 	if voterPhone.Valid {

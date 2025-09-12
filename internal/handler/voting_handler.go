@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"be-v2/internal/domain"
 	"be-v2/internal/middleware"
@@ -394,6 +395,32 @@ func (h *VotingHandler) CreatePersonalInfo(w http.ResponseWriter, r *http.Reques
 	ipAddress := h.getClientIP(r)
 	userAgent := r.Header.Get("User-Agent")
 
+	// Idempotency: attempt to acquire lock (per user + request body or header key)
+	idemKey := r.Header.Get("Idempotency-Key")
+	seed := fmt.Sprintf("pi:%s:%x", userID, md5.Sum(rawReq))
+	if idemKey != "" {
+		seed = fmt.Sprintf("pi:%s:%s", userID, idemKey)
+	}
+	if ok, _ := h.votingService.TryIdempotencyLock(ctx, seed, 60*time.Second); !ok {
+		if existing, _ := h.votingService.GetPersonalInfoByUserID(ctx, userID); existing != nil {
+			resp := domain.PersonalInfoResponse{
+				UserID:        existing.UserID,
+				FirstName:     existing.FirstName,
+				LastName:      existing.LastName,
+				Email:         existing.Email,
+				Phone:         existing.Phone,
+				FavoriteVideo: existing.FavoriteVideo,
+				CreatedAt:     existing.CreatedAt,
+				UpdatedAt:     existing.UpdatedAt,
+				Message:       "Already processed",
+			}
+			h.respondJSON(w, http.StatusOK, resp)
+			return
+		}
+		h.respondJSON(w, http.StatusOK, map[string]string{"message": "Already processing"})
+		return
+	}
+
 	// Create or update personal info
 	response, err := h.votingService.CreateOrUpdatePersonalInfo(ctx, userID, &req, ipAddress, userAgent)
 	if err != nil {
@@ -453,6 +480,32 @@ func (h *VotingHandler) SubmitVoteOnly(w http.ResponseWriter, r *http.Request) {
 	// Handle vote submission based on provided identifier
 	var response *domain.VoteOnlyResponse
 	var err error
+
+	// Idempotency: if userID present, attempt per-user+candidate key lock
+	if req.UserID != "" {
+		idemKey := r.Header.Get("Idempotency-Key")
+		seed := fmt.Sprintf("vote:%s:%d", req.UserID, req.CandidateID)
+		if idemKey != "" {
+			seed = fmt.Sprintf("%s:%s", seed, idemKey)
+		}
+		if ok, _ := h.votingService.TryIdempotencyLock(ctx, seed, 60*time.Second); !ok {
+			// Pre-check: if user already voted, return 200 with current status
+			if existing, _ := h.votingService.GetUserVoteStatus(ctx, req.UserID); existing != nil {
+				resp := domain.VoteOnlyResponse{
+					UserID:      req.UserID,
+					CandidateID: existing.CandidateID,
+					VoteID:      existing.VoteID,
+					VotedAt:     *existing.VotedAt,
+					Message:     "Already processed",
+				}
+				h.respondJSON(w, http.StatusOK, resp)
+				return
+			}
+			// If no existing, treat as in-flight duplicate
+			h.respondJSON(w, http.StatusOK, map[string]string{"message": "Already processing"})
+			return
+		}
+	}
 
 	if req.UserID != "" {
 		// Vote by user ID
@@ -552,6 +605,23 @@ func (h *VotingHandler) AcceptWelcome(w http.ResponseWriter, r *http.Request) {
 	// Get client IP and User-Agent for audit trail
 	req.IPAddress = h.getClientIP(r)
 	req.UserAgent = r.Header.Get("User-Agent")
+
+	// Idempotency: per user+rules_version
+	idemKey := r.Header.Get("Idempotency-Key")
+	seed := fmt.Sprintf("welcome:%s:%s", req.UserID, req.RulesVersion)
+	if idemKey != "" {
+		seed = fmt.Sprintf("%s:%s", seed, idemKey)
+	}
+	if ok, _ := h.votingService.TryIdempotencyLock(ctx, seed, 60*time.Second); !ok {
+		if existing, _ := h.votingService.GetWelcomeAcceptance(ctx, req.UserID); existing != nil {
+			if existing.WelcomeAccepted && existing.RulesVersion == req.RulesVersion {
+				h.respondJSON(w, http.StatusOK, existing)
+				return
+			}
+		}
+		h.respondJSON(w, http.StatusOK, map[string]string{"message": "Already processing"})
+		return
+	}
 
 	// Save welcome acceptance
 	response, err := h.votingService.SaveWelcomeAcceptance(ctx, req.UserID, req.RulesVersion)

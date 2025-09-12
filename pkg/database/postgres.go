@@ -9,48 +9,104 @@ import (
 )
 
 type PostgresDB struct {
-	Pool *pgxpool.Pool
+	Pool     *pgxpool.Pool // Write pool (primary database)
+	ReadPool *pgxpool.Pool // Read pool (read replica)
 }
 
-// NewPostgresDB creates a new PostgreSQL connection pool
-func NewPostgresDB(ctx context.Context, databaseURL string) (*PostgresDB, error) {
-	config, err := pgxpool.ParseConfig(databaseURL)
+// NewPostgresDB creates a new PostgreSQL connection pool with optional read replica
+func NewPostgresDB(ctx context.Context, databaseURL, readDatabaseURL string) (*PostgresDB, error) {
+	// Create write pool
+	writeConfig, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse database URL: %w", err)
 	}
 
-	// Configure connection pool for Cloud Run
-	config.MaxConns = 10
-	config.MinConns = 2
-	config.MaxConnLifetime = time.Hour
-	config.MaxConnIdleTime = time.Minute * 30
-	config.HealthCheckPeriod = time.Minute
-	config.ConnConfig.ConnectTimeout = time.Second * 5
+	// Configure connection pool for Cloud Run concurrency and increased throughput
+	// With containerConcurrency 80 and higher autoscale, allow more DB concurrency per instance
+	writeConfig.MaxConns = 50 // allow more concurrent write queries per instance
+	writeConfig.MinConns = 5
+	writeConfig.MaxConnLifetime = time.Minute * 15 // Increased for connection reuse
+	writeConfig.MaxConnIdleTime = time.Minute * 5  // Balanced for performance
+	writeConfig.HealthCheckPeriod = time.Minute
+	writeConfig.ConnConfig.ConnectTimeout = time.Second * 5
 
-	pool, err := pgxpool.NewWithConfig(ctx, config)
+	writePool, err := pgxpool.NewWithConfig(ctx, writeConfig)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create connection pool: %w", err)
+		return nil, fmt.Errorf("failed to create write connection pool: %w", err)
 	}
 
-	// Test the connection
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+	// Test the write connection
+	if err := writePool.Ping(ctx); err != nil {
+		writePool.Close()
+		return nil, fmt.Errorf("failed to ping write database: %w", err)
 	}
 
-	return &PostgresDB{Pool: pool}, nil
+	db := &PostgresDB{Pool: writePool}
+
+	// Create read pool if read URL is provided and different from write URL
+	if readDatabaseURL != "" && readDatabaseURL != databaseURL {
+		readConfig, err := pgxpool.ParseConfig(readDatabaseURL)
+		if err != nil {
+			writePool.Close()
+			return nil, fmt.Errorf("failed to parse read database URL: %w", err)
+		}
+
+		// Configure read pool for high-throughput read operations (80% of traffic)
+		readConfig.MaxConns = 80 // allow higher parallelism for read-heavy workload
+		readConfig.MinConns = 8
+		readConfig.MaxConnLifetime = time.Minute * 15 // Increased for connection reuse
+		readConfig.MaxConnIdleTime = time.Minute * 5  // Balanced for performance
+		readConfig.HealthCheckPeriod = time.Minute
+		readConfig.ConnConfig.ConnectTimeout = time.Second * 5
+
+		readPool, err := pgxpool.NewWithConfig(ctx, readConfig)
+		if err != nil {
+			writePool.Close()
+			return nil, fmt.Errorf("failed to create read connection pool: %w", err)
+		}
+
+		// Test the read connection
+		if err := readPool.Ping(ctx); err != nil {
+			writePool.Close()
+			readPool.Close()
+			return nil, fmt.Errorf("failed to ping read database: %w", err)
+		}
+
+		db.ReadPool = readPool
+	} else {
+		// If no read replica, use write pool for reads
+		db.ReadPool = writePool
+	}
+
+	return db, nil
 }
 
-// Close closes the database connection pool
+// Close closes the database connection pools
 func (db *PostgresDB) Close() {
 	if db.Pool != nil {
 		db.Pool.Close()
+	}
+	if db.ReadPool != nil && db.ReadPool != db.Pool {
+		db.ReadPool.Close()
 	}
 }
 
 // Health checks the database connection
 func (db *PostgresDB) Health(ctx context.Context) error {
 	return db.Pool.Ping(ctx)
+}
+
+// GetReadPool returns the appropriate pool for read operations
+func (db *PostgresDB) GetReadPool() *pgxpool.Pool {
+	if db.ReadPool != nil {
+		return db.ReadPool
+	}
+	return db.Pool
+}
+
+// GetWritePool returns the pool for write operations
+func (db *PostgresDB) GetWritePool() *pgxpool.Pool {
+	return db.Pool
 }
 
 // RefreshMaterializedView refreshes the vote_count_summary materialized view

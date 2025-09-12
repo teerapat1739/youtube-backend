@@ -129,7 +129,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	log.WithFields(map[string]interface{}{
+	log.WithFields(map[string]any{
 		"port":        cfg.Port,
 		"log_level":   cfg.LogLevel,
 		"environment": cfg.Environment,
@@ -143,40 +143,54 @@ func main() {
 
 	// Initialize database connection
 	ctx := context.Background()
-	db, err := database.NewPostgresDB(ctx, cfg.DatabaseURL)
+	db, err := database.NewPostgresDB(ctx, cfg.DatabaseURL, cfg.DatabaseReadURL)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to connect to database")
 	}
 
 	// Initialize Redis connection
-	redisClient, err := redis.NewClient(cfg.RedisURL, cfg.Environment)
+	redisClient, err := redis.NewClient(cfg.RedisURL, cfg.Environment, log.Logger)
 	if err != nil {
 		log.WithError(err).Fatal("Failed to connect to Redis")
 	}
 
 	// Initialize repositories and services
-	voteRepo := repository.NewVoteRepository(db)
+	voteRepo := repository.NewVoteRepository(db).WithLogger(log.Logger)
 	votingService := service.NewVotingService(voteRepo, redisClient, log.Logger)
 
 	// Initialize visitor service
 	visitorRepo := repository.NewVisitorRepository(db)
-	visitorService := service.NewVisitorService(redisClient, visitorRepo, log, cfg.Environment)
+	visitorService := service.NewVisitorService(redisClient, visitorRepo, voteRepo, log, cfg.Environment)
 
 	// Start visitor service
 	if err := visitorService.Start(ctx); err != nil {
 		log.WithError(err).Fatal("Failed to start visitor service")
 	}
 
+	// Start periodic materialized view refresher (every 15 seconds)
+	go func() {
+		refreshTicker := time.NewTicker(15 * time.Second)
+		defer refreshTicker.Stop()
+		for range refreshTicker.C {
+			refreshCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if err := db.RefreshMaterializedView(refreshCtx); err != nil {
+				log.WithError(err).Warn("Failed to refresh materialized view")
+			}
+			cancel()
+		}
+	}()
+
 	// Setup router
 	router := setupRouter(container, votingService, visitorService, db, redisClient)
 
-	// Create HTTP server
+	// Create HTTP server with optimized timeouts for high load
 	server := &http.Server{
-		Addr:         ":" + cfg.Port,
-		Handler:      router,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:           ":" + cfg.Port,
+		Handler:        router,
+		ReadTimeout:    10 * time.Second,  // Reduced for faster failure detection
+		WriteTimeout:   60 * time.Second,  // Increased to align with upstream timeouts
+		IdleTimeout:    120 * time.Second, // Increased for connection reuse
+		MaxHeaderBytes: 1 << 20,           // 1MB max header size
 	}
 
 	// Create resources manager for cleanup
@@ -260,6 +274,7 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 	r.Use(middleware.RequestID(log))
 	r.Use(chiMiddleware.RealIP)
 	r.Use(chiMiddleware.Recoverer)
+	r.Use(chiMiddleware.Compress(5)) // Add gzip compression with level 5 (balanced)
 	r.Use(chiMiddleware.Timeout(60 * time.Second))
 
 	// Create handlers
