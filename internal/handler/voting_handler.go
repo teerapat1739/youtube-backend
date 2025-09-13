@@ -386,7 +386,7 @@ func (h *VotingHandler) CreatePersonalInfo(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Validate request
+	// Validate request.
 	if err := h.validatePersonalInfoRequest(&req); err != nil {
 		h.respondError(w, http.StatusUnprocessableEntity, err.Error())
 		return
