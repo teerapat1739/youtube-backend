@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"be-v2/internal/config"
 	"be-v2/internal/domain"
 	"be-v2/internal/service"
 	"be-v2/pkg/logger"
@@ -20,14 +21,19 @@ type VisitorHandler struct {
 	visitorService service.VisitorService
 	votingService  *service.VotingService
 	logger         *logger.Logger
+	config         *config.Config
+	supabaseClient *service.SupabaseClient
 }
 
 // NewVisitorHandler creates a new visitor handler
-func NewVisitorHandler(visitorService service.VisitorService, votingService *service.VotingService, logger *logger.Logger) *VisitorHandler {
+func NewVisitorHandler(visitorService service.VisitorService, votingService *service.VotingService, logger *logger.Logger, config *config.Config) *VisitorHandler {
+	supabaseClient := service.NewSupabaseClient(config, logger)
 	return &VisitorHandler{
 		visitorService: visitorService,
 		votingService:  votingService,
 		logger:         logger,
+		config:         config,
+		supabaseClient: supabaseClient,
 	}
 }
 
@@ -52,6 +58,7 @@ type ErrorResponse struct {
 	Type    string `json:"type"`
 	Message string `json:"message"`
 }
+
 
 // RecordVisit handles POST /api/visitor/visit
 func (h *VisitorHandler) RecordVisit(w http.ResponseWriter, r *http.Request) {
@@ -115,16 +122,25 @@ func (h *VisitorHandler) RecordVisit(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetStats handles GET /api/visitor/stats
-// Now returns voting statistics instead of visitor statistics for the voting platform
+// Now returns voting statistics from Supabase accumulate-slots function
 func (h *VisitorHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Get voting statistics from the voting service
-	voteStats, err := h.getVoteStats(ctx)
+	// Call Supabase accumulate-slots function to update stats with current vote data
+	supabaseStats, err := h.callSupabaseAccumulate(ctx)
 	if err != nil {
-		h.logger.WithError(err).Error("Failed to get vote stats")
-		h.sendErrorResponse(w, http.StatusInternalServerError, "internal_error", "Failed to get voting statistics")
+		h.logger.WithError(err).Error("Failed to call Supabase accumulate function")
+		h.sendErrorResponse(w, http.StatusInternalServerError, "internal_error", "Failed to update voting statistics")
 		return
+	}
+
+	// Create response with the accumulated total from Supabase
+	// The total represents the accumulated visits/votes
+	voteStats := &domain.VoteStats{
+		TotalVisits:  int64(supabaseStats.Total),
+		DailyVisits:  0, // Not provided by Supabase function currently
+		UniqueVisits: int64(supabaseStats.Total), // Using total as unique for now
+		LastUpdated:  time.Now(),
 	}
 
 	response := StatsResponse{
@@ -145,7 +161,8 @@ func (h *VisitorHandler) GetStats(w http.ResponseWriter, r *http.Request) {
 		"total_votes":   voteStats.TotalVisits,
 		"daily_votes":   voteStats.DailyVisits,
 		"unique_voters": voteStats.UniqueVisits,
-	}).Debug("Vote stats retrieved successfully")
+		"last_updated":  voteStats.LastUpdated,
+	}).Debug("Vote stats retrieved successfully from Supabase")
 }
 
 // GetHistoricalStats handles GET /api/visitor/historical
@@ -249,6 +266,24 @@ func max(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// callSupabaseAccumulate calls the Supabase accumulate-slots function with current stats
+func (h *VisitorHandler) callSupabaseAccumulate(ctx context.Context) (*service.SupabaseAccumulateResponse, error) {
+	// First, get the current vote stats from the voting service
+	voteStats, err := h.getVoteStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Prepare the request body with current stats
+	requestBody := map[string]interface{}{
+		"total_visits":  voteStats.TotalVisits,
+		"unique_visits": voteStats.UniqueVisits,
+	}
+
+	// Use the shared Supabase client
+	return h.supabaseClient.FetchAccumulateSlots(ctx, requestBody)
 }
 
 // getVoteStats retrieves voting statistics and formats them for backward compatibility

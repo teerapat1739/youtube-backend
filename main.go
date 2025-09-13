@@ -156,7 +156,7 @@ func main() {
 
 	// Initialize repositories and services
 	voteRepo := repository.NewVoteRepository(db).WithLogger(log.Logger)
-	votingService := service.NewVotingService(voteRepo, redisClient, log.Logger)
+	votingService := service.NewVotingService(voteRepo, redisClient, log.Logger, cfg)
 
 	// Initialize visitor service
 	visitorRepo := repository.NewVisitorRepository(db)
@@ -281,7 +281,7 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 	healthHandler := handler.NewHealthHandler(container)
 	subscriptionHandler := handler.NewSubscriptionHandler(container)
 	votingHandler := handler.NewVotingHandler(votingService)
-	visitorHandler := handler.NewVisitorHandler(visitorService, votingService, log)
+	visitorHandler := handler.NewVisitorHandler(visitorService, votingService, log, cfg)
 	testingHandler := handler.NewTestingHandler(container, db, redisClient)
 
 	// Setup routes

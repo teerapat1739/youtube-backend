@@ -20,6 +20,7 @@ type Config struct {
 	DatabaseReadURL   string // Read replica URL for SELECT queries
 	RedisURL          string
 	SupabaseURL       string
+	SupabaseAnonKey   string
 	SupabaseJWTSecret string
 	Environment       string
 }
@@ -40,6 +41,7 @@ func Load() (*Config, error) {
 		DatabaseReadURL:   getEnv("DATABASE_READ_URL", getEnv("DATABASE_URL", "")), // Falls back to write DB if not set
 		RedisURL:          getEnv("REDIS_URL", ""),
 		SupabaseURL:       getEnv("SUPABASE_URL", ""),
+		SupabaseAnonKey:   getEnv("SUPABASE_ANON_KEY", ""),
 		SupabaseJWTSecret: getEnv("SUPABASE_JWT_SECRET", ""),
 		Environment:       getEnv("ENVIRONMENT", "production"),
 	}, nil
