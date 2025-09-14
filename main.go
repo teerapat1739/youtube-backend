@@ -47,7 +47,7 @@ func (r *Resources) Cleanup(ctx context.Context) error {
 
 	var errors []error
 
-	r.log.Info("Starting graceful shutdown....")
+	r.log.Info("Starting graceful shutdown...")
 
 	// Shutdown HTTP server first to stop accepting new requests
 	if r.server != nil {
