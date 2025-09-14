@@ -6,14 +6,11 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
-	"be-v2/internal/config"
 	"be-v2/internal/domain"
 	"be-v2/internal/repository"
-	"be-v2/pkg/logger"
 	"be-v2/pkg/redis"
 	"be-v2/pkg/utils"
 
@@ -22,26 +19,19 @@ import (
 )
 
 type VotingService struct {
-	voteRepo       *repository.VoteRepository
-	redis          *redis.Client
-	cacheService   *CacheService
-	logger         *zap.Logger
-	config         *config.Config
-	supabaseClient *SupabaseClient
+	voteRepo     *repository.VoteRepository
+	redis        *redis.Client
+	cacheService *CacheService
+	logger       *zap.Logger
 }
 
-func NewVotingService(voteRepo *repository.VoteRepository, redisClient *redis.Client, zapLogger *zap.Logger, cfg *config.Config) *VotingService {
-	cacheService := NewCacheService(redisClient, zapLogger)
-	// Create a logger wrapper for Supabase client
-	logWrapper := &logger.Logger{Logger: zapLogger.With(zap.String("component", "supabase"))}
-	supabaseClient := NewSupabaseClient(cfg, logWrapper)
+func NewVotingService(voteRepo *repository.VoteRepository, redisClient *redis.Client, logger *zap.Logger) *VotingService {
+	cacheService := NewCacheService(redisClient, logger)
 	return &VotingService{
-		voteRepo:       voteRepo,
-		redis:          redisClient,
-		cacheService:   cacheService,
-		logger:         zapLogger,
-		config:         cfg,
-		supabaseClient: supabaseClient,
+		voteRepo:     voteRepo,
+		redis:        redisClient,
+		cacheService: cacheService,
+		logger:       logger,
 	}
 }
 
@@ -287,22 +277,16 @@ func (s *VotingService) addUserVoteStatus(ctx context.Context, status *domain.Vo
 	}
 }
 
-// fetchSupabaseIncrements calls the Supabase function to get accumulated vote increments
-func (s *VotingService) fetchSupabaseIncrements(ctx context.Context) (*SupabaseAccumulateResponse, error) {
-	// Use the shared Supabase client with nil body for just fetching
-	return s.supabaseClient.FetchAccumulateSlots(ctx, nil)
-}
-
 // GetVotingResults returns comprehensive voting results with rankings and statistics
 func (s *VotingService) GetVotingResults(ctx context.Context) (*domain.VotingResults, error) {
-	// Skip cache to always fetch fresh Supabase data
-	// cachedData, err := s.redis.Get(ctx, s.redis.KeyBuilder.KeyVotingResults())
-	// if err == nil && cachedData != "" {
-	// 	var results domain.VotingResults
-	// 	if err := json.Unmarshal([]byte(cachedData), &results); err == nil {
-	// 		return &results, nil
-	// 	}
-	// }
+	// Try to get from cache first
+	cachedData, err := s.redis.Get(ctx, s.redis.KeyBuilder.KeyVotingResults())
+	if err == nil && cachedData != "" {
+		var results domain.VotingResults
+		if err := json.Unmarshal([]byte(cachedData), &results); err == nil {
+			return &results, nil
+		}
+	}
 
 	// Get from database
 	teams, err := s.voteRepo.GetTeamsWithVoteCounts(ctx)
@@ -310,32 +294,13 @@ func (s *VotingService) GetVotingResults(ctx context.Context) (*domain.VotingRes
 		return nil, fmt.Errorf("failed to get teams with vote counts: %w", err)
 	}
 
-	// Fetch Supabase increments to add to vote counts
-	supabaseData, err := s.fetchSupabaseIncrements(ctx)
+	// Get total vote count
+	totalVotes, err := s.voteRepo.GetTotalVoteCount(ctx)
 	if err != nil {
-		// Log error but continue with database votes only
-		s.logger.Error("Failed to fetch Supabase increments, using database votes only", zap.Error(err))
-	} else {
-		// Add Supabase increments to team vote counts
-		for i := range teams {
-			teamIDStr := strconv.Itoa(teams[i].ID)
-			if increment, exists := supabaseData.Increments[teamIDStr]; exists {
-				teams[i].VoteCount += increment
-				s.logger.Info("Added Supabase increment to team",
-					zap.Int("teamID", teams[i].ID),
-					zap.Int("increment", increment),
-					zap.Int("newTotal", teams[i].VoteCount))
-			}
-		}
+		return nil, fmt.Errorf("failed to get total vote count: %w", err)
 	}
 
-	// Calculate total votes (including Supabase increments)
-	totalVotes := 0
-	for _, team := range teams {
-		totalVotes += team.VoteCount
-	}
-
-	// Calculate rankings and percentages with updated vote counts
+	// Calculate rankings and percentages
 	teamsWithRankings := s.buildTeamRankings(teams, totalVotes)
 
 	// Determine winner (highest votes)
@@ -358,9 +323,9 @@ func (s *VotingService) GetVotingResults(ctx context.Context) (*domain.VotingRes
 		Statistics:     statistics,
 	}
 
-	// Cache the results with shorter TTL since we're combining with Supabase
+	// Cache the results
 	if data, err := json.Marshal(results); err == nil {
-		_ = s.redis.Set(ctx, s.redis.KeyBuilder.KeyVotingResults(), string(data), 30*time.Second)
+		_ = s.redis.Set(ctx, s.redis.KeyBuilder.KeyVotingResults(), string(data), redis.TTLCounts)
 	}
 
 	return results, nil
