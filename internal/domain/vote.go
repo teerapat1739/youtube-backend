@@ -228,3 +228,12 @@ type UserStatusResponse struct {
 	HasVoted          bool   `json:"has_voted"`
 	CurrentStep       string `json:"current_step"` // welcome, personal-info, vote, complete
 }
+
+// RandomVoteWithTeamResponse represents the response for GET /api/random-vote-with-team
+type RandomVoteWithTeamResponse struct {
+	VoteID     string `json:"vote_id"`
+	VoterName  string `json:"voter_name"`
+	VoterEmail string `json:"voter_email"`
+	VoterPhone string `json:"voter_phone"`
+	TeamName   string `json:"team_name"`
+}

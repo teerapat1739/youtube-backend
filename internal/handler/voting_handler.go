@@ -242,7 +242,6 @@ func (h *VotingHandler) getUserID(r *http.Request) string {
 		fmt.Printf("[DEBUG] getUserID: Found user in context - Sub: '%s', Email: '%s', Name: '%s'\n", user.Sub, user.Email, user.Name)
 		return user.Sub // This is the actual user ID from the token
 	}
-	fmt.Printf("[DEBUG] getUserID: No user found in context or user is nil\n")
 	// Return empty string if no authenticated user
 	// This ensures voting endpoints require proper authentication
 	return ""
@@ -733,4 +732,30 @@ func (h *VotingHandler) GetPersonalInfoMe(w http.ResponseWriter, r *http.Request
 
 	fmt.Printf("[DEBUG] GetPersonalInfoMe: Successfully found personal info for userID '%s', hasVoted=%v\n", userID, personalInfo.HasVoted)
 	h.respondJSON(w, http.StatusOK, personalInfo)
+}
+
+// GetRandomVoteWithTeam handles GET /api/random-vote-with-team - production endpoint requiring authentication
+func (h *VotingHandler) GetRandomVoteWithTeam(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get user ID from auth context to ensure authentication
+	userID := h.getUserID(r)
+	if userID == "" {
+		h.respondError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	// Get random vote with team information
+	response, err := h.votingService.GetRandomVoteWithTeam(ctx)
+	fmt.Println("response", response)
+	if err != nil {
+		if strings.Contains(err.Error(), "no votes found") {
+			h.respondError(w, http.StatusNotFound, "No votes found")
+			return
+		}
+		h.respondError(w, http.StatusInternalServerError, "Failed to retrieve random vote")
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, response)
 }

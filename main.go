@@ -339,6 +339,9 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 			r.Route("/youtube", func(r chi.Router) {
 				r.Get("/subscription-check", subscriptionHandler.CheckSubscription)
 			})
+
+			// Random vote endpoint (production, requires authentication)
+			r.Get("/random-vote-with-team", votingHandler.GetRandomVoteWithTeam)
 		})
 
 		// Testing routes (development environment only, no auth required)
