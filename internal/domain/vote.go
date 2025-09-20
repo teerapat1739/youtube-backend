@@ -237,3 +237,19 @@ type RandomVoteWithTeamResponse struct {
 	VoterPhone string `json:"voter_phone"`
 	TeamName   string `json:"team_name"`
 }
+
+// WinnerInfo represents a lottery winner
+type WinnerInfo struct {
+	VoteID     string  `json:"vote_id"`
+	VoterName  string  `json:"voter_name"`
+	VoterEmail string  `json:"voter_email"`
+	VoterPhone *string `json:"voter_phone,omitempty"`
+	TeamName   string  `json:"team_name"`
+}
+
+// MultipleWinnersResponse represents multiple lottery winners
+type MultipleWinnersResponse struct {
+	Success      bool                 `json:"success"`
+	TotalWinners int                  `json:"total_winners"`
+	Prizes       map[int][]WinnerInfo `json:"prizes"`
+}

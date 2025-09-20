@@ -759,3 +759,37 @@ func (h *VotingHandler) GetRandomVoteWithTeam(w http.ResponseWriter, r *http.Req
 
 	h.respondJSON(w, http.StatusOK, response)
 }
+
+// GetMultipleWinners handles GET /api/lottery/winners - gets multiple random winners for lottery
+func (h *VotingHandler) GetMultipleWinners(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get user ID from auth context to ensure authentication
+	userID := h.getUserID(r)
+	if userID == "" {
+		h.respondError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	// Define prize configuration (could be made configurable via query params)
+	prizeConfig := map[int]int{
+		1: 1,   // Prize 1: 1 winner
+		2: 1,   // Prize 2: 1 winner
+		3: 5,   // Prize 3: 5 winners
+		4: 10,  // Prize 4: 10 winners
+		5: 20,  // Prize 5: 20 winners
+	}
+
+	// Get multiple random winners
+	response, err := h.votingService.GetMultipleRandomWinners(ctx, prizeConfig)
+	if err != nil {
+		if strings.Contains(err.Error(), "no votes found") {
+			h.respondError(w, http.StatusNotFound, "No votes found")
+			return
+		}
+		h.respondError(w, http.StatusInternalServerError, "Failed to generate winners")
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, response)
+}

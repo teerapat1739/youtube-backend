@@ -342,6 +342,11 @@ func setupRouter(container *container.Container, votingService *service.VotingSe
 
 			// Random vote endpoint (production, requires authentication)
 			r.Get("/random-vote-with-team", votingHandler.GetRandomVoteWithTeam)
+
+			// Lottery endpoints (production, requires authentication)
+			r.Route("/lottery", func(r chi.Router) {
+				r.Get("/winners", votingHandler.GetMultipleWinners)
+			})
 		})
 
 		// Testing routes (development environment only, no auth required)

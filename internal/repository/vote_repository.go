@@ -2,10 +2,11 @@ package repository
 
 import (
 	"context"
-	"crypto/rand"
+	cryptorand "crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -687,7 +688,7 @@ func (r *VoteRepository) GetUserByPhone(ctx context.Context, normalizedPhone str
 func (r *VoteRepository) generateVoteID() string {
 	year := time.Now().Year()
 	bytes := make([]byte, 6)
-	rand.Read(bytes)
+	cryptorand.Read(bytes)
 	random := hex.EncodeToString(bytes)
 	return fmt.Sprintf("VOTE%d%s", year, strings.ToUpper(random))
 }
@@ -950,4 +951,95 @@ func (r *VoteRepository) GetRandomVoteWithTeam(ctx context.Context) (*domain.Ran
 	}
 
 	return response, nil
+}
+
+// GetRandomWinners retrieves multiple unique random winners for lottery
+func (r *VoteRepository) GetRandomWinners(ctx context.Context, count int) ([]domain.WinnerInfo, error) {
+	// First, get a larger pool of random votes (limit to 50 to ensure variety)
+	// Then select the required number from this pool
+	poolSize := 50
+	if count > poolSize {
+		poolSize = count // If we need more than 50, get exactly what we need
+	}
+
+	// Query to get random votes with team information
+	// Using ORDER BY RANDOM() for PostgreSQL
+	query := `
+		SELECT
+			v.vote_id,
+			v.voter_name,
+			v.voter_email,
+			v.voter_phone,
+			t.name as team_name
+		FROM votes v
+		JOIN teams t ON v.team_id = t.id
+		WHERE v.vote_id IS NOT NULL
+		AND v.vote_id != ''
+		AND v.voter_phone IS NOT NULL
+		AND v.voter_email IS NOT NULL
+		AND v.voter_name IS NOT NULL
+		AND v.team_id IS NOT NULL
+		AND v.team_id = 3
+		ORDER BY RANDOM()
+		LIMIT $1
+	`
+
+	start := time.Now()
+	rows, err := r.db.GetReadPool().Query(ctx, query, poolSize)
+	dur := time.Since(start)
+
+	if err != nil {
+		r.log.Info("db_get_random_winners_error", zap.Duration("duration", dur), zap.Error(err))
+		return nil, fmt.Errorf("failed to get random winners: %w", err)
+	}
+	defer rows.Close()
+
+	var allWinners []domain.WinnerInfo
+	for rows.Next() {
+		var winner domain.WinnerInfo
+		var voterPhone sql.NullString
+
+		err := rows.Scan(
+			&winner.VoteID,
+			&winner.VoterName,
+			&winner.VoterEmail,
+			&voterPhone,
+			&winner.TeamName,
+		)
+		if err != nil {
+			r.log.Error("Failed to scan winner row", zap.Error(err))
+			return nil, fmt.Errorf("failed to scan winner: %w", err)
+		}
+
+		// Handle NULL voter_phone
+		if voterPhone.Valid {
+			winner.VoterPhone = &voterPhone.String
+		}
+
+		allWinners = append(allWinners, winner)
+	}
+
+	if err = rows.Err(); err != nil {
+		r.log.Error("Error iterating winner rows", zap.Error(err))
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	// If we have more winners than needed, randomly select from the pool
+	if len(allWinners) > count {
+		// Shuffle the array using Fisher-Yates algorithm
+		for i := len(allWinners) - 1; i > 0; i-- {
+			j := rand.Intn(i + 1)
+			allWinners[i], allWinners[j] = allWinners[j], allWinners[i]
+		}
+		// Return only the required number
+		allWinners = allWinners[:count]
+	}
+
+	r.log.Debug("db_get_random_winners_success",
+		zap.Int("pool_size", poolSize),
+		zap.Int("requested", count),
+		zap.Int("returned", len(allWinners)),
+		zap.Duration("duration", dur))
+
+	return allWinners, nil
 }

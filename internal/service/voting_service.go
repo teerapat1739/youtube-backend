@@ -791,3 +791,63 @@ func (s *VotingService) GetRandomVoteWithTeam(ctx context.Context) (*domain.Rand
 
 	return response, nil
 }
+
+// GetMultipleRandomWinners retrieves multiple unique random winners for lottery
+func (s *VotingService) GetMultipleRandomWinners(ctx context.Context, prizeConfig map[int]int) (*domain.MultipleWinnersResponse, error) {
+	s.logger.Debug("Getting multiple random winners for lottery")
+
+	// Calculate total winners needed
+	totalWinnersNeeded := 0
+	for _, count := range prizeConfig {
+		totalWinnersNeeded += count
+	}
+
+	s.logger.Info("Fetching random winners",
+		zap.Int("total_winners_needed", totalWinnersNeeded))
+
+	// Get random winners from repository
+	winners, err := s.voteRepo.GetRandomWinners(ctx, totalWinnersNeeded)
+	if err != nil {
+		s.logger.Error("Failed to get random winners",
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to get random winners: %w", err)
+	}
+
+	// Check if we have enough winners
+	if len(winners) < totalWinnersNeeded {
+		s.logger.Warn("Not enough unique winners available",
+			zap.Int("requested", totalWinnersNeeded),
+			zap.Int("available", len(winners)))
+	}
+
+	// Distribute winners to prize levels
+	result := &domain.MultipleWinnersResponse{
+		Success:      true,
+		TotalWinners: len(winners),
+		Prizes:       make(map[int][]domain.WinnerInfo),
+	}
+
+	winnerIndex := 0
+	for prizeLevel := 1; prizeLevel <= 5; prizeLevel++ {
+		count, exists := prizeConfig[prizeLevel]
+		if !exists {
+			continue
+		}
+
+		result.Prizes[prizeLevel] = make([]domain.WinnerInfo, 0, count)
+
+		for i := 0; i < count && winnerIndex < len(winners); i++ {
+			result.Prizes[prizeLevel] = append(result.Prizes[prizeLevel], winners[winnerIndex])
+			winnerIndex++
+		}
+
+		s.logger.Debug("Assigned winners to prize level",
+			zap.Int("prize_level", prizeLevel),
+			zap.Int("winners_assigned", len(result.Prizes[prizeLevel])))
+	}
+
+	s.logger.Info("Successfully generated multiple winners",
+		zap.Int("total_winners", result.TotalWinners))
+
+	return result, nil
+}
