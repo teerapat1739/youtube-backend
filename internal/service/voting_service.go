@@ -152,14 +152,14 @@ func (s *VotingService) SubmitVote(ctx context.Context, userID string, req *doma
 
 	// Invalidate relevant caches for consistency
 	s.cacheService.InvalidateVotingCaches(req.TeamID)
-	
+
 	// Invalidate user-specific caches after vote submission
 	if err := s.cacheService.InvalidateUserVoteStatusCache(ctx, userID); err != nil {
 		s.logger.Warn("Failed to invalidate user vote status cache",
 			zap.String("user_id", userID),
 			zap.Error(err))
 	}
-	
+
 	// Invalidate personal info cache if it was updated with the vote
 	if req.PersonalInfo.FirstName != "" {
 		if err := s.cacheService.InvalidatePersonalInfoCache(ctx, userID); err != nil {
@@ -471,7 +471,7 @@ func (s *VotingService) CreateOrUpdatePersonalInfo(ctx context.Context, userID s
 	// Cache the phone usage to prevent duplicate voting attempts
 	phoneKey := s.redis.KeyBuilder.KeyPhoneVoted(normalizedPhone)
 	_ = s.redis.Set(ctx, phoneKey, response.UserID, redis.TTLUserVote)
-	
+
 	// Invalidate personal info cache since it was just updated
 	if err := s.cacheService.InvalidatePersonalInfoCache(ctx, userID); err != nil {
 		s.logger.Warn("Failed to invalidate personal info cache",
@@ -728,4 +728,126 @@ func (s *VotingService) GetUserStatus(ctx context.Context, userID string) (*doma
 		zap.String("current_step", response.CurrentStep))
 
 	return response, nil
+}
+
+// GetRandomVoteWithTeam retrieves a random vote with team information for production use
+func (s *VotingService) GetRandomVoteWithTeam(ctx context.Context) (*domain.RandomVoteWithTeamResponse, error) {
+	s.logger.Debug("Getting random vote with team information")
+
+	// Use atomic Redis operations to prevent race conditions
+	// First, try to get a random vote and atomically mark it as served
+	maxAttempts := 10    // Reduced attempts since we're using better random selection
+	ttl := 2 * time.Hour // Shorter TTL for better rotation
+
+	for i := 0; i < maxAttempts; i++ {
+		// Get a random vote from the repository
+		response, err := s.voteRepo.GetRandomVoteWithTeam(ctx)
+		if err != nil {
+			s.logger.Error("Failed to get random vote with team",
+				zap.Error(err))
+			return nil, fmt.Errorf("failed to retrieve random vote: %w", err)
+		}
+
+		// Use Redis SET with NX (only if not exists) to atomically check and set
+		cacheKey := s.redis.KeyBuilder.KeyCustom("random_vote:served:%s", response.VoteID)
+
+		// Try to set the cache key only if it doesn't exist (atomic operation)
+		success, err := s.redis.SetNX(ctx, cacheKey, "1", ttl)
+		if err != nil {
+			// If Redis is unavailable, log warning but continue
+			s.logger.Warn("Failed to check Redis cache for duplicate vote",
+				zap.String("vote_id", response.VoteID),
+				zap.Error(err))
+			// Return the vote anyway if Redis is down
+			return response, nil
+		}
+
+		// If we successfully set the key (it didn't exist), this vote is unique
+		if success {
+			s.logger.Info("Successfully retrieved unique random vote",
+				zap.String("vote_id", response.VoteID),
+				zap.String("team_name", response.TeamName),
+				zap.Int("attempt", i+1))
+
+			return response, nil
+		}
+
+		// This vote_id was served recently, try again
+		s.logger.Debug("Vote already served recently, retrying",
+			zap.String("vote_id", response.VoteID),
+			zap.Int("attempt", i+1))
+	}
+
+	// If we couldn't find a non-cached vote after max attempts,
+	// return the last one we got (better than failing)
+	s.logger.Warn("Could not find non-cached vote after maximum attempts, returning last result",
+		zap.Int("max_attempts", maxAttempts))
+	response, err := s.voteRepo.GetRandomVoteWithTeam(ctx)
+	if err != nil {
+		s.logger.Error("Failed to get random vote with team on final attempt",
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to retrieve random vote: %w", err)
+	}
+
+	return response, nil
+}
+
+// GetMultipleRandomWinners retrieves multiple unique random winners for lottery
+func (s *VotingService) GetMultipleRandomWinners(ctx context.Context, prizeConfig map[int]int) (*domain.MultipleWinnersResponse, error) {
+	s.logger.Debug("Getting multiple random winners for lottery")
+
+	// Calculate total winners needed
+	totalWinnersNeeded := 0
+	for _, count := range prizeConfig {
+		totalWinnersNeeded += count
+	}
+
+	s.logger.Info("Fetching random winners",
+		zap.Int("total_winners_needed", totalWinnersNeeded))
+
+	// Get random winners from repository
+	winners, err := s.voteRepo.GetRandomWinners(ctx, totalWinnersNeeded)
+	if err != nil {
+		s.logger.Error("Failed to get random winners",
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to get random winners: %w", err)
+	}
+
+	// Check if we have enough winners
+	if len(winners) < totalWinnersNeeded {
+		s.logger.Warn("Not enough unique winners available",
+			zap.Int("requested", totalWinnersNeeded),
+			zap.Int("available", len(winners)))
+	}
+
+	// Distribute winners to prize levels
+	result := &domain.MultipleWinnersResponse{
+		Success:      true,
+		TotalWinners: len(winners),
+		Prizes:       make(map[int][]domain.WinnerInfo),
+	}
+
+	winnerIndex := 0
+	for prizeLevel := 1; prizeLevel <= 5; prizeLevel++ {
+		count, exists := prizeConfig[prizeLevel]
+		if !exists {
+			continue
+		}
+
+		result.Prizes[prizeLevel] = make([]domain.WinnerInfo, 0, count)
+
+		for i := 0; i < count && winnerIndex < len(winners); i++ {
+			result.Prizes[prizeLevel] = append(result.Prizes[prizeLevel], winners[winnerIndex])
+			winnerIndex++
+		}
+
+		s.logger.Debug("Assigned winners to prize level",
+			zap.Int("prize_level", prizeLevel),
+			zap.Int("winners_assigned", len(result.Prizes[prizeLevel])))
+	}
+
+	s.logger.Info("Successfully generated multiple winners",
+		zap.Int("total_winners", result.TotalWinners))
+
+	return result, nil
 }

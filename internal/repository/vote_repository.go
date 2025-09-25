@@ -2,10 +2,11 @@ package repository
 
 import (
 	"context"
-	"crypto/rand"
+	cryptorand "crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -687,7 +688,7 @@ func (r *VoteRepository) GetUserByPhone(ctx context.Context, normalizedPhone str
 func (r *VoteRepository) generateVoteID() string {
 	year := time.Now().Year()
 	bytes := make([]byte, 6)
-	rand.Read(bytes)
+	cryptorand.Read(bytes)
 	random := hex.EncodeToString(bytes)
 	return fmt.Sprintf("VOTE%d%s", year, strings.ToUpper(random))
 }
@@ -872,4 +873,173 @@ func (r *VoteRepository) GetPersonalInfoByUserID(ctx context.Context, userID str
 	}
 
 	return &response, nil
+}
+
+// GetRandomVoteWithTeam retrieves a random vote with team information for production use
+func (r *VoteRepository) GetRandomVoteWithTeam(ctx context.Context) (*domain.RandomVoteWithTeamResponse, error) {
+	// Use a more reliable random selection with TABLESAMPLE for better distribution
+	voteQuery := `
+		SELECT v.vote_id, v.voter_name, v.voter_email, v.voter_phone, v.team_id
+		FROM votes v TABLESAMPLE BERNOULLI(1)
+		WHERE
+		v.team_id IS NOT NULL AND
+		v.vote_id IS NOT NULL AND
+		v.voter_phone IS NOT NULL AND
+		v.voter_email IS NOT NULL AND
+		v.voter_name IS NOT NULL
+		ORDER BY RANDOM()
+		LIMIT 1
+	`
+
+	var voteID, voterName, voterEmail string
+	var voterPhone sql.NullString
+	var teamID int
+
+	start := time.Now()
+	err := r.db.GetReadPool().QueryRow(ctx, voteQuery).Scan(
+		&voteID,
+		&voterName,
+		&voterEmail,
+		&voterPhone,
+		&teamID,
+	)
+	voteQueryDur := time.Since(start)
+
+	if err == pgx.ErrNoRows {
+		r.log.Info("db_get_random_vote_no_results", zap.Duration("duration", voteQueryDur))
+		return nil, fmt.Errorf("no votes found")
+	}
+	if err != nil {
+		r.log.Info("db_get_random_vote_error", zap.Duration("duration", voteQueryDur), zap.Error(err))
+		return nil, fmt.Errorf("failed to get random vote: %w", err)
+	}
+
+	// Second, fetch the team name for this specific team_id
+	teamQuery := `SELECT name FROM teams WHERE id = $1`
+	var teamName string
+
+	teamStart := time.Now()
+	err = r.db.GetReadPool().QueryRow(ctx, teamQuery, teamID).Scan(&teamName)
+	teamQueryDur := time.Since(teamStart)
+
+	if err != nil {
+		r.log.Info("db_get_team_name_error",
+			zap.Int("team_id", teamID),
+			zap.Duration("duration", teamQueryDur),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to get team name for team_id %d: %w", teamID, err)
+	}
+
+	totalDur := voteQueryDur + teamQueryDur
+	r.log.Debug("db_get_random_vote_with_team_success",
+		zap.Duration("vote_query_duration", voteQueryDur),
+		zap.Duration("team_query_duration", teamQueryDur),
+		zap.Duration("total_duration", totalDur))
+
+	// Handle NULL voter_phone
+	voterPhoneStr := ""
+	if voterPhone.Valid {
+		voterPhoneStr = voterPhone.String
+	}
+
+	response := &domain.RandomVoteWithTeamResponse{
+		VoteID:     voteID,
+		VoterName:  voterName,
+		VoterEmail: voterEmail,
+		VoterPhone: voterPhoneStr,
+		TeamName:   teamName,
+	}
+
+	return response, nil
+}
+
+// GetRandomWinners retrieves multiple unique random winners for lottery
+func (r *VoteRepository) GetRandomWinners(ctx context.Context, count int) ([]domain.WinnerInfo, error) {
+	// First, get a larger pool of random votes (limit to 50 to ensure variety)
+	// Then select the required number from this pool
+	poolSize := 50
+	if count > poolSize {
+		poolSize = count // If we need more than 50, get exactly what we need
+	}
+
+	// Query to get random votes with team information
+	// Using ORDER BY RANDOM() for PostgreSQL
+	query := `
+		SELECT
+			v.vote_id,
+			v.voter_name,
+			v.voter_email,
+			v.voter_phone,
+			t.name as team_name
+		FROM votes v
+		JOIN teams t ON v.team_id = t.id
+		WHERE v.vote_id IS NOT NULL
+		AND v.vote_id != ''
+		AND v.voter_phone IS NOT NULL
+		AND v.voter_email IS NOT NULL
+		AND v.voter_name IS NOT NULL
+		AND v.team_id IS NOT NULL
+		AND v.team_id = 1
+		ORDER BY RANDOM()
+		LIMIT $1
+	`
+
+	start := time.Now()
+	rows, err := r.db.GetReadPool().Query(ctx, query, poolSize)
+	dur := time.Since(start)
+
+	if err != nil {
+		r.log.Info("db_get_random_winners_error", zap.Duration("duration", dur), zap.Error(err))
+		return nil, fmt.Errorf("failed to get random winners: %w", err)
+	}
+	defer rows.Close()
+
+	var allWinners []domain.WinnerInfo
+	for rows.Next() {
+		var winner domain.WinnerInfo
+		var voterPhone sql.NullString
+
+		err := rows.Scan(
+			&winner.VoteID,
+			&winner.VoterName,
+			&winner.VoterEmail,
+			&voterPhone,
+			&winner.TeamName,
+		)
+		if err != nil {
+			r.log.Error("Failed to scan winner row", zap.Error(err))
+			return nil, fmt.Errorf("failed to scan winner: %w", err)
+		}
+
+		// Handle NULL voter_phone
+		if voterPhone.Valid {
+			winner.VoterPhone = &voterPhone.String
+		}
+
+		allWinners = append(allWinners, winner)
+	}
+
+	if err = rows.Err(); err != nil {
+		r.log.Error("Error iterating winner rows", zap.Error(err))
+		return nil, fmt.Errorf("error iterating rows: %w", err)
+	}
+
+	// If we have more winners than needed, randomly select from the pool
+	if len(allWinners) > count {
+		// Shuffle the array using Fisher-Yates algorithm
+		for i := len(allWinners) - 1; i > 0; i-- {
+			j := rand.Intn(i + 1)
+			allWinners[i], allWinners[j] = allWinners[j], allWinners[i]
+		}
+		// Return only the required number
+		allWinners = allWinners[:count]
+	}
+
+	r.log.Debug("db_get_random_winners_success",
+		zap.Int("pool_size", poolSize),
+		zap.Int("requested", count),
+		zap.Int("returned", len(allWinners)),
+		zap.Duration("duration", dur))
+
+	return allWinners, nil
 }

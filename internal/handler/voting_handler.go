@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"be-v2/internal/domain"
 	"be-v2/internal/middleware"
@@ -241,7 +242,6 @@ func (h *VotingHandler) getUserID(r *http.Request) string {
 		fmt.Printf("[DEBUG] getUserID: Found user in context - Sub: '%s', Email: '%s', Name: '%s'\n", user.Sub, user.Email, user.Name)
 		return user.Sub // This is the actual user ID from the token
 	}
-	fmt.Printf("[DEBUG] getUserID: No user found in context or user is nil\n")
 	// Return empty string if no authenticated user
 	// This ensures voting endpoints require proper authentication
 	return ""
@@ -385,7 +385,7 @@ func (h *VotingHandler) CreatePersonalInfo(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// Validate request
+	// Validate request.
 	if err := h.validatePersonalInfoRequest(&req); err != nil {
 		h.respondError(w, http.StatusUnprocessableEntity, err.Error())
 		return
@@ -547,29 +547,42 @@ func (h *VotingHandler) SubmitVoteOnly(w http.ResponseWriter, r *http.Request) {
 
 // validatePersonalInfoRequest validates the personal info request
 func (h *VotingHandler) validatePersonalInfoRequest(req *domain.PersonalInfoRequest) error {
-	if req.FirstName == "" || len(req.FirstName) < 2 {
-		return fmt.Errorf("first name is required (min 2 characters)")
+	// Validate first name - Unicode character count
+	firstNameCharCount := utf8.RuneCountInString(req.FirstName)
+	if req.FirstName == "" || firstNameCharCount < 2 {
+		return fmt.Errorf("ชื่อจริงต้องมีอย่างน้อย 2 ตัวอักษร")
 	}
 
-	if req.LastName == "" || len(req.LastName) < 2 {
-		return fmt.Errorf("last name is required (min 2 characters)")
+	// Validate last name - Unicode character count
+	lastNameCharCount := utf8.RuneCountInString(req.LastName)
+	if req.LastName == "" || lastNameCharCount < 2 {
+		return fmt.Errorf("นามสกุลต้องมีอย่างน้อย 2 ตัวอักษร")
+	}
+
+	// Validate combined first name + last name length
+	combinedCharCount := firstNameCharCount + lastNameCharCount
+	if combinedCharCount > 255 {
+		return fmt.Errorf("ชื่อและนามสกุลรวมกันต้องไม่เกิน 255 ตัวอักษร (ปัจจุบัน: %d ตัวอักษร)", combinedCharCount)
 	}
 
 	if req.Email == "" || !strings.Contains(req.Email, "@") {
-		return fmt.Errorf("valid email is required")
+		return fmt.Errorf("กรุณาระบุอีเมลที่ถูกต้อง")
 	}
 
 	if req.Phone == "" || len(req.Phone) < 10 {
-		return fmt.Errorf("phone number is required (min 10 digits)")
+		return fmt.Errorf("หมายเลขโทรศัพท์ต้องมีอย่างน้อย 10 หลัก")
 	}
 
 	// Validate favorite video field (optional but limited to 1000 characters)
-	if len(req.FavoriteVideo) > 1000 {
-		return fmt.Errorf("favorite video field cannot exceed 1000 characters")
+	// Count Unicode characters (runes), not bytes
+	favoriteVideoCharCount := utf8.RuneCountInString(req.FavoriteVideo)
+	if favoriteVideoCharCount > 1000 {
+		fmt.Printf("[DEBUG] validatePersonalInfoRequest: favorite video field cannot exceed 1000 characters: %s\n character count: %d, byte length: %d", req.FavoriteVideo, favoriteVideoCharCount, len(req.FavoriteVideo))
+		return fmt.Errorf("คำตอบต้องไม่เกิน 1000 ตัวอักษร (ปัจจุบัน: %d ตัวอักษร)", favoriteVideoCharCount)
 	}
 
 	if !req.ConsentPDPA {
-		return fmt.Errorf("PDPA consent is required to proceed")
+		return fmt.Errorf("จำเป็นต้องยอมรับข้อตกลง PDPA เพื่อดำเนินการต่อ")
 	}
 
 	return nil
@@ -719,4 +732,64 @@ func (h *VotingHandler) GetPersonalInfoMe(w http.ResponseWriter, r *http.Request
 
 	fmt.Printf("[DEBUG] GetPersonalInfoMe: Successfully found personal info for userID '%s', hasVoted=%v\n", userID, personalInfo.HasVoted)
 	h.respondJSON(w, http.StatusOK, personalInfo)
+}
+
+// GetRandomVoteWithTeam handles GET /api/random-vote-with-team - production endpoint requiring authentication
+func (h *VotingHandler) GetRandomVoteWithTeam(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get user ID from auth context to ensure authentication
+	userID := h.getUserID(r)
+	if userID == "" {
+		h.respondError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	// Get random vote with team information
+	response, err := h.votingService.GetRandomVoteWithTeam(ctx)
+	fmt.Println("response", response)
+	if err != nil {
+		if strings.Contains(err.Error(), "no votes found") {
+			h.respondError(w, http.StatusNotFound, "No votes found")
+			return
+		}
+		h.respondError(w, http.StatusInternalServerError, "Failed to retrieve random vote")
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, response)
+}
+
+// GetMultipleWinners handles GET /api/lottery/winners - gets multiple random winners for lottery
+func (h *VotingHandler) GetMultipleWinners(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get user ID from auth context to ensure authentication
+	userID := h.getUserID(r)
+	if userID == "" {
+		h.respondError(w, http.StatusUnauthorized, "Authentication required")
+		return
+	}
+
+	// Define prize configuration (could be made configurable via query params)
+	prizeConfig := map[int]int{
+		1: 1,   // Prize 1: 1 winner
+		2: 1,   // Prize 2: 1 winner
+		3: 5,   // Prize 3: 5 winners
+		4: 10,  // Prize 4: 10 winners
+		5: 20,  // Prize 5: 20 winners
+	}
+
+	// Get multiple random winners
+	response, err := h.votingService.GetMultipleRandomWinners(ctx, prizeConfig)
+	if err != nil {
+		if strings.Contains(err.Error(), "no votes found") {
+			h.respondError(w, http.StatusNotFound, "No votes found")
+			return
+		}
+		h.respondError(w, http.StatusInternalServerError, "Failed to generate winners")
+		return
+	}
+
+	h.respondJSON(w, http.StatusOK, response)
 }
