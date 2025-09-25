@@ -979,7 +979,7 @@ func (r *VoteRepository) GetRandomWinners(ctx context.Context, count int) ([]dom
 		AND v.voter_email IS NOT NULL
 		AND v.voter_name IS NOT NULL
 		AND v.team_id IS NOT NULL
-		AND v.team_id = 3
+		AND v.team_id = 1
 		ORDER BY RANDOM()
 		LIMIT $1
 	`
